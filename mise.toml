@@ -1,0 +1,31 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+# `mise bootstrap` and `mise doctor project` both need 2026.10.20.
+min_version = "2026.10.20"
+
+# scraps — see README.md and AGENTS.md
+#   mise bootstrap        install the pinned toolchain; repeat-safe
+#   mise doctor project   check this machine is ready; inspects only
+
+[tools]
+go = "1.27.3"
+golangci-lint = "2.15.0"
+
+[bootstrap.hooks.post-tools]
+run = "mise exec -- go version"
+
+# mise discards check output and shows only the hint, so each check tests one thing.
+
+[doctor.checks.git]
+description = "git is installed"
+run = "git --version"
+hint = "Install git (macOS: xcode-select --install)."
+
+[doctor.checks.go]
+description = "Go is installed at the version mise.toml pins"
+run = 'test "$(go env GOVERSION)" = "go$(mise current go)"'
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.golangci-lint]
+description = "golangci-lint is installed"
+run = "golangci-lint version"
+hint = "Run `mise bootstrap`."
