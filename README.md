@@ -106,7 +106,8 @@ collects what they leave behind.
 
 ## Install
 
-Scraps is a single binary.
+Scraps is a single binary for linux and macOS (amd64 and arm64), published as GitHub
+release archives that mise's `github:` backend installs directly.
 
 ```bash
 mise use -g github:lighthousenz/scraps
@@ -212,7 +213,7 @@ clickable URLs.
 | `pattern` | A regex the value has to match. Named groups are available to `url`. |
 | `url` | A URL template. `{value}` is the whole value; `{name}` is a named group. |
 | `required` | Every scenario has to carry this link. |
-| `required-when` | A conditional requirement. `{ expects-not: correct }` means any scenario whose current expectation is a failure has to carry this link. |
+| `required-when` | A conditional requirement. `{ expects-not: correct }` means any scenario where some history entry expects an outcome other than `correct` has to carry this link. |
 
 Validation is offline: Scraps checks patterns and presence, and never calls out to
 check that a ticket exists.
@@ -224,8 +225,10 @@ These map a short name to a definition. A source can be:
 - a local path: `./actors/docengine-cli`
 - a Git reference: `github:owner/repo/path@ref`
 
-Git references are resolved once by `scraps lock` and pinned by content hash in
-`scraps.lock`. A harness whose job is catching regressions can't let its own actors
+Git references are resolved once by `scraps lock` and pinned by commit and content hash in
+`scraps.lock`. Fetched content is cached under `.scraps/sources/`. In CI, run
+`scraps lock --frozen`: it fetches exactly what the lock names, checks the hashes, and
+fails rather than change the lock. A harness whose job is catching regressions can't let its own actors
 change underneath it.
 
 ## Scenarios
@@ -322,8 +325,16 @@ the failure recorded. A crash is often the bug itself, so an outcome can match o
 outcomes:
   correct:      { final: { has-paragraphs: [alpha, beta] } }
   insert-throws:
-    step-error: { actor: bob, operation: insert-paragraph, message: ~"Cannot read properties" }
+    step-error: { actor: bob, operation: insert-paragraph, message: { matches: "Cannot read properties" } }
 ```
+
+A `step-error` matcher sets at least one of `actor`, `operation` and `message`, and
+matches only if a step failed and every field it sets agrees. `message` takes one of two
+forms:
+
+- a string, which must equal the recorded message exactly;
+- `{ matches: <regex> }`, which matches if the regex finds a match anywhere in the
+  message.
 
 ### Expressions
 
@@ -479,11 +490,17 @@ The protocol is versioned. This section describes **protocol 1**.
 - **stdout is reserved for the protocol.** Anything else an actor prints there is a
   protocol error, and the run is `broken`.
 - **stderr is captured** into the run log for that actor.
-- Scraps starts the actor in its own process group, with `run.workdir` as the working
-  directory. Every file the actor writes has to stay inside that directory or
-  `run.artefacts`.
+- Scraps starts the actor in its own process group. The working directory is the actor's
+  **prepared directory**: a cached copy of its own directory, after `prepare` has run.
+  That's why a relative `run` such as `node ./main.mjs` works.
+- The run's workdir and artefacts directory are absolute paths, set as
+  `SCRAPS_WORKDIR` and `SCRAPS_ARTEFACTS` and also sent in `scraps/initialize`. Every
+  file the actor writes has to stay inside one of them.
 - The workdir lasts for the whole run. An actor that is stopped and started again gets
   the same workdir back, which is how a server reloads what it persisted.
+- An actor that serves something binds `127.0.0.1` on port 0 and publishes the
+  resulting address in its `initialize` outputs. Scraps never allocates ports, so
+  scenarios can run in parallel safely.
 
 ### Conversation
 
@@ -604,9 +621,24 @@ operations:
 ```
 
 In `outcomes`, each key is an artefact name, and each check under it is a checker
-operation. Scraps passes the artefact's files to the operation, which returns
-`{ "match": true | false }`. Check names have to be unique across all the checkers a
-project declares.
+operation. Check names have to be unique across all the checkers a project declares.
+
+Checker calls work like this:
+
+- **Params:** if the check's value is a mapping, it is the operation's params. If it
+  isn't, it's bound to the operation's single declared param, so
+  `has-paragraphs: [alpha, beta]` is sent as `{ "texts": ["alpha", "beta"] }`.
+- **Reserved `artefact` param:** Scraps adds it to every call, so a checker operation
+  can't declare a param with that name. It looks like this:
+
+  ```json
+  { "texts": ["alpha", "beta"],
+    "artefact": { "name": "final", "dir": "/…/artefacts/carol", "files": ["final.json"] } }
+  ```
+
+  `files` is the list the producing artefact operation returned.
+- **Reply:** `{ "match": true | false, "reason": "…" }`, where `reason` is optional and
+  shown in reports.
 
 These built-in checks work on any artefact:
 
@@ -652,7 +684,7 @@ Run it in CI.
 | Command | What it does |
 |---|---|
 | `scraps init` | Writes a starter `scraps.yaml` and an example scenario. |
-| `scraps lock` | Resolves Git actor and checker references and writes `scraps.lock`. |
+| `scraps lock [--frozen]` | Resolves Git actor and checker references and writes `scraps.lock`. `--frozen` fetches only what is already locked and never rewrites the lock. |
 | `scraps schema` | Generates `.scraps/schema.json`. |
 | `scraps validate [paths…]` | Full static validation. Exits 2 on any problem. |
 | `scraps run [paths…]` | Runs scenarios and prints verdicts. |
@@ -709,6 +741,7 @@ sequenceDiagram
 
 ```json
 {
+  "schema": 1,
   "scraps": "1.4.0",
   "seed": 81723,
   "subjects": { "docengine": "2.31.0" },
@@ -755,10 +788,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
+      # Scraps needs a concrete version; resolve "latest" before calling it.
+      - id: version
+        run: |
+          v="${{ matrix.docengine }}"
+          [ "$v" = latest ] && v="$(npm view docengine version)"
+          echo "docengine=$v" >> "$GITHUB_OUTPUT"
+      - run: scraps lock --frozen
       - run: scraps validate
       - run: >
           scraps run
-          --subject docengine=${{ matrix.docengine }}
+          --subject docengine=${{ steps.version.outputs.docengine }}
           --report json=scraps.json
           --report markdown=$GITHUB_STEP_SUMMARY
       - if: always()

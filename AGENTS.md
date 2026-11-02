@@ -60,9 +60,11 @@ the PR has to say which.
 Put new code where this says, so parallel work does not collide.
 
 ```
-cmd/scraps/        CLI entrypoint and flag parsing only
+cmd/scraps/        CLI entrypoint; one file per subcommand (run.go, validate.go, …)
 internal/
+  model/           shared types: project, scenario, actor definition, results
   config/          scraps.yaml, scenario.yaml and actor.yaml: parsing and static validation
+  lock/            scraps.lock: reading, resolving GitHub sources, the source cache
   schema/          generated JSON Schema (`scraps schema`)
   expr/            ${{ }} reference resolution
   graph/           actor dependency graph: start order, stop order, cycle detection
@@ -70,6 +72,7 @@ internal/
   actor/           process supervision: spawn, process groups, mise exec, timeouts
   conductor/       one scenario run: prepare, start, steps, stop, collect
   verdict/         outcome matching, history conditions, verdict classification
+  checks/          built-in checks: file-exists, json, text
   report/          JSON, JUnit, Markdown, Mermaid
 docs/              normative protocol spec, when it outgrows the README
 examples/          a runnable example project, including actors in other languages
@@ -78,6 +81,11 @@ testdata/          fixtures for Go tests; synthetic only
 
 - One concern per package. `conductor` orchestrates and owns no parsing, matching or
   formatting.
+- Shared types live in `internal/model`. Add to them; do not create parallel type files
+  in other packages.
+- A new subcommand gets its own file in `cmd/scraps/`. Do not grow `main.go` beyond
+  dispatch.
+- Supported platforms are linux and macOS. Process-group and signal code may be unix-only.
 - Tests sit beside the code as `_test.go`, per Go convention.
 - Only `actor` starts processes. Only `protocol` reads or writes the wire format.
 
