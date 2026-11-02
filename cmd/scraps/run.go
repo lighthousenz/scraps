@@ -1,20 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 )
-
-// multiFlag collects repeatable string flags.
-type multiFlag []string
-
-func (f *multiFlag) String() string { return strings.Join(*f, ", ") }
-func (f *multiFlag) Set(v string) error {
-	*f = append(*f, v)
-	return nil
-}
 
 func cmdRun(args []string) int {
 	fs := flag.NewFlagSet("scraps run", flag.ContinueOnError)
@@ -35,7 +26,7 @@ func cmdRun(args []string) int {
 	var reports multiFlag
 	fs.Var(&reports, "report", "Write a report (format=path); repeatable")
 
-	seed := fs.Int("seed", 0, "Reuse the seed from an earlier run")
+	seed := fs.Int64("seed", 0, "Reuse the seed from an earlier run")
 	_ = seed
 
 	parallel := fs.Int("parallel", 1, "Run up to n scenarios at once")
@@ -45,6 +36,9 @@ func cmdRun(args []string) int {
 	_ = keep
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	fmt.Fprintln(os.Stderr, "scraps run: not implemented")

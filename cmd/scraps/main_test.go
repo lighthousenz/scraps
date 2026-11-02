@@ -3,34 +3,44 @@ package main_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func scrapsPath(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	bin := dir + "/scraps"
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
-	cmd.Dir = "."
+var builtBin string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "scraps-test-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "creating temp dir: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	builtBin = filepath.Join(dir, "scraps")
+	cmd := exec.CommandContext(context.Background(), "go", "build",
+		"-ldflags", "-X main.version=test-version",
+		"-o", builtBin, ".")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("building scraps: %v", err)
+		fmt.Fprintf(os.Stderr, "building scraps: %v\n", err)
+		os.Exit(1)
 	}
-	return bin
+
+	os.Exit(m.Run())
 }
 
 func TestSubcommandStubsExit3(t *testing.T) {
-	bin := scrapsPath(t)
+	bin := builtBin
 	cmds := []string{"init", "lock", "schema", "validate", "run", "diagram", "explain"}
 	for _, name := range cmds {
 		t.Run(name, func(t *testing.T) {
-			ctx := context.Background()
-			cmd := exec.CommandContext(ctx, bin, name)
+			cmd := exec.CommandContext(t.Context(), bin, name)
 			out, err := cmd.CombinedOutput()
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) {
@@ -47,19 +57,29 @@ func TestSubcommandStubsExit3(t *testing.T) {
 	}
 }
 
+func TestSubcommandHelpExit0(t *testing.T) {
+	bin := builtBin
+	cmds := []string{"init", "lock", "schema", "validate", "run", "diagram", "explain"}
+	for _, name := range cmds {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), bin, name, "--help")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s --help failed: %v (output: %s)", name, err, out)
+			}
+		})
+	}
+}
+
 func TestVersionFlag(t *testing.T) {
-	bin := scrapsPath(t)
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, bin, "--version")
+	bin := builtBin
+	cmd := exec.CommandContext(t.Context(), bin, "--version")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("--version failed: %v (output: %s)", err, out)
 	}
 	got := strings.TrimSpace(string(out))
-	if got == "" {
-		t.Fatal("--version produced empty output")
-	}
-	if got != "dev" {
-		t.Logf("version is %q (expected 'dev' in test build)", got)
+	if got != "test-version" {
+		t.Fatalf("--version: got %q, want %q", got, "test-version")
 	}
 }

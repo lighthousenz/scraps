@@ -41,7 +41,8 @@ go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o d
 
 [tasks.test]
 description = "Run tests with race detector"
-run = "go test -race ${@:-./...}"
+usage = 'arg "[args]" var=#true double_dash="automatic"'
+run = "go test -race ${usage_args:-./...}"
 
 [tasks.lint]
 description = "Run golangci-lint"

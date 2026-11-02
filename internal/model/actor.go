@@ -14,7 +14,7 @@ type ActorDefinition struct {
 	Run         string                  `yaml:"run"         json:"run"`
 	Inputs      map[string]InputDef     `yaml:"inputs"      json:"inputs,omitempty"`
 	Outputs     map[string]OutputDef    `yaml:"outputs"     json:"outputs,omitempty"`
-	Lifecycle   Lifecycle               `yaml:"lifecycle"   json:"lifecycle,omitempty"`
+	Lifecycle   Lifecycle               `yaml:"lifecycle"   json:"lifecycle"`
 	Conditions  map[string]ConditionDef `yaml:"conditions"  json:"conditions,omitempty"`
 	Operations  map[string]OperationDef `yaml:"operations"  json:"operations,omitempty"`
 	Node        *yaml.Node              `yaml:"-"           json:"-"`
@@ -42,8 +42,8 @@ type OutputDef struct {
 type Lifecycle struct {
 	Start   []map[string]any `yaml:"start"   json:"start,omitempty"`
 	Ready   string           `yaml:"ready"   json:"ready,omitempty"`
-	Stop    []any            `yaml:"stop"    json:"stop,omitempty"`
-	Collect []any            `yaml:"collect" json:"collect,omitempty"`
+	Stop    []map[string]any `yaml:"stop"    json:"stop,omitempty"`
+	Collect []map[string]any `yaml:"collect" json:"collect,omitempty"`
 }
 
 // ConditionDef describes a polled condition.
