@@ -26,8 +26,7 @@ the bootstrap entry that provides it, and the doctor check that verifies it.
 
 ## Build and test
 
-These tasks are the build contract. They are added with the first Go code; until then,
-`mise bootstrap` and `mise doctor project` are the only commands.
+These tasks are the build contract.
 
 ```bash
 mise run build             # go build ./... into dist/
