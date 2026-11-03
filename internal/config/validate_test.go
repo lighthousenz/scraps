@@ -1065,6 +1065,71 @@ func TestValidate_StepErrorMessageMapNoMatches(t *testing.T) {
 	}
 }
 
+// --- buildActorScope determinism ---
+
+func TestValidate_BuildActorScopeDeterministic(t *testing.T) {
+	// Two definitions share kind "collab-server" but only one declares output "ws-url".
+	// buildActorScope must union outputs from all matching definitions so the check
+	// is deterministic regardless of map iteration order.
+	lp := minimalProject()
+	lp.Actors["impl-a"] = &model.ActorDefinition{
+		Name: "impl-a",
+		Kind: "collab-server",
+		Outputs: map[string]model.OutputDef{
+			"url": {Type: "string"},
+		},
+		Operations: map[string]model.OperationDef{},
+	}
+	lp.Actors["impl-b"] = &model.ActorDefinition{
+		Name: "impl-b",
+		Kind: "collab-server",
+		Outputs: map[string]model.OutputDef{
+			"url":    {Type: "string"},
+			"ws-url": {Type: "string"},
+		},
+		Operations: map[string]model.OperationDef{},
+	}
+	// An editor that references inputs.srv.outputs.ws-url
+	lp.Actors["ws-editor"] = &model.ActorDefinition{
+		Name:     "ws-editor",
+		Kind:     "ws-editor",
+		Protocol: 1,
+		Inputs: map[string]model.InputDef{
+			"srv": {Type: "actor", Kind: "collab-server"},
+		},
+		Lifecycle: model.Lifecycle{},
+		Operations: map[string]model.OperationDef{
+			"noop": {},
+		},
+	}
+
+	// Verify that buildActorScope unions outputs from both impl-a and impl-b
+	scope := buildActorScope(lp.Actors["ws-editor"], lp)
+	info := scope.Inputs["srv"]
+	if !info.IsActor {
+		t.Fatal("expected srv to be actor-typed")
+	}
+	if info.Outputs == nil {
+		t.Fatal("expected outputs to be populated")
+	}
+	// Both "url" (from both) and "ws-url" (from impl-b only) must be present
+	if !info.Outputs["url"] {
+		t.Error("expected output 'url' in union")
+	}
+	if !info.Outputs["ws-url"] {
+		t.Error("expected output 'ws-url' in union")
+	}
+
+	// Run 100 iterations to verify determinism (Go randomizes map order)
+	for i := 0; i < 100; i++ {
+		s := buildActorScope(lp.Actors["ws-editor"], lp)
+		info := s.Inputs["srv"]
+		if !info.Outputs["ws-url"] {
+			t.Fatalf("iteration %d: output 'ws-url' missing from scope (non-deterministic)", i)
+		}
+	}
+}
+
 // --- Reserved op path construction ---
 
 func TestValidate_ReservedOpPathUsesProjectDir(t *testing.T) {

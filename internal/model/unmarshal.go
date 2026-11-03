@@ -88,16 +88,30 @@ func (o *Outcome) UnmarshalYAML(node *yaml.Node) error {
 		valNode := node.Content[i+1]
 
 		if keyNode.Value == "step-error" {
-			// Decode strictly: reject unknown keys in step-error matchers.
+			// Decode the matcher using Node.Decode to resolve YAML aliases/anchors.
+			// Then reject unknown keys by inspecting the mapping node's keys directly.
 			var matcher StepErrorMatcher
-			raw, err := yaml.Marshal(valNode)
-			if err != nil {
+			resolved := valNode
+			if resolved.Kind == yaml.AliasNode {
+				resolved = resolved.Alias
+			}
+			if err := valNode.Decode(&matcher); err != nil {
 				return fmt.Errorf("decoding step-error: %w", err)
 			}
-			dec := yaml.NewDecoder(strings.NewReader(string(raw)))
-			dec.KnownFields(true)
-			if err := dec.Decode(&matcher); err != nil {
-				return fmt.Errorf("decoding step-error: %w", err)
+			if resolved.Kind == yaml.MappingNode {
+				for ki := 0; ki < len(resolved.Content)-1; ki += 2 {
+					k := resolved.Content[ki]
+					keyVal := k.Value
+					if k.Kind == yaml.AliasNode && k.Alias != nil {
+						keyVal = k.Alias.Value
+					}
+					switch keyVal {
+					case "actor", "operation", "message":
+						// known field
+					default:
+						return fmt.Errorf("decoding step-error: unknown field %q", keyVal)
+					}
+				}
 			}
 			checks = append(checks, Check{
 				StepError: &matcher,

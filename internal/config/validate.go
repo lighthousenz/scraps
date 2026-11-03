@@ -706,18 +706,20 @@ func buildActorScope(def *model.ActorDefinition, lp *LoadedProject) *expr.Static
 	for inputName, inputDef := range def.Inputs {
 		info := expr.InputInfo{IsActor: inputDef.Type == "actor"}
 		if info.IsActor && inputDef.Kind != "" {
-			// Find the actor definition for this kind and populate its outputs.
+			// Union outputs from ALL definitions matching this kind,
+			// so the check is deterministic regardless of map iteration order.
 			for _, actorDef := range lp.Actors {
 				kind := actorDef.Kind
 				if kind == "" {
 					kind = actorDef.Name
 				}
 				if kind == inputDef.Kind {
-					info.Outputs = make(map[string]bool)
+					if info.Outputs == nil {
+						info.Outputs = make(map[string]bool)
+					}
 					for outName := range actorDef.Outputs {
 						info.Outputs[outName] = true
 					}
-					break
 				}
 			}
 		}
