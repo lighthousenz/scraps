@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/lighthousenz/scraps/internal/config"
 )
 
 func cmdValidate(args []string) int {
@@ -16,6 +18,26 @@ func cmdValidate(args []string) int {
 		}
 		return 2
 	}
-	fmt.Fprintln(os.Stderr, "scraps validate: not implemented")
-	return 3
+
+	paths := fs.Args()
+	lp, loadProblems := config.LoadProject(paths)
+	if lp == nil {
+		for _, p := range loadProblems {
+			fmt.Fprintln(os.Stderr, p)
+		}
+		return 2
+	}
+
+	validateProblems := config.Validate(lp)
+	allProblems := append(loadProblems, validateProblems...)
+
+	if len(allProblems) > 0 {
+		for _, p := range allProblems {
+			fmt.Fprintln(os.Stderr, p)
+		}
+		return 2
+	}
+
+	fmt.Printf("ok: %d scenarios\n", len(lp.Scenarios))
+	return 0
 }

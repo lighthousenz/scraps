@@ -1,0 +1,21 @@
+name: collab-server
+protocol: 1
+run: node ./main.mjs
+
+inputs:
+  document: { type: string }
+
+outputs:
+  url: { type: string }
+
+lifecycle:
+  ready: listening
+  stop:
+    - shutdown
+
+conditions:
+  listening: { call: status, until: { listening: true }, every: 50ms }
+
+operations:
+  status: { returns: { listening: { type: boolean } } }
+  shutdown: {}

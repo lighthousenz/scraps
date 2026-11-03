@@ -1,0 +1,35 @@
+name: yjs-editor
+description: A Yjs client connected to a collab server, with controllable sync.
+protocol: 1
+
+run: node ./main.mjs
+
+inputs:
+  server: { type: actor, kind: collab-server }
+  room:   { type: string, default: doc }
+
+outputs:
+  client-id: { type: string }
+
+lifecycle:
+  start:
+    - connect: { url: "${{ inputs.server.outputs.url }}", room: "${{ inputs.room }}" }
+  ready: synced
+  stop:
+    - disconnect
+  collect:
+    - snapshot: { as: final-state }
+
+conditions:
+  synced:    { call: status, until: { synced: true }, every: 50ms }
+  converged: { call: digest, all-equal: true, every: 50ms }
+
+operations:
+  connect:          { params: { url: { type: string }, room: { type: string } } }
+  disconnect:       {}
+  pause-sync:       {}
+  resume-sync:      {}
+  insert-paragraph: { params: { at: { enum: [start, end] }, text: { type: string } } }
+  status:           { returns: { synced: { type: boolean } } }
+  digest:           { returns: { value: { type: string } } }
+  snapshot:         { params: { as: { type: string } }, artefact: true }
