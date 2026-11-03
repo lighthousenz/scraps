@@ -77,13 +77,26 @@ func markdownRow(r model.ScenarioResult) string {
 	if r.Expected == r.Actual {
 		outcome = r.Actual
 	}
+	if len(r.Overlapping) > 0 {
+		outcome = fmt.Sprintf("%s → overlapping: %s", r.Expected, strings.Join(r.Overlapping, ", "))
+	}
 	if r.Verdict == model.VerdictBroken {
 		outcome = r.Reason
 	}
 
 	links := formatMarkdownLinks(r.Links)
 
-	return fmt.Sprintf("| %s | %s | %s | %s |", scenario, r.Verdict, outcome, links)
+	return fmt.Sprintf("| %s | %s | %s | %s |", scenario, r.Verdict, escapeMarkdownCell(outcome), links)
+}
+
+// escapeMarkdownCell escapes pipe characters and newlines so the value
+// does not break a GFM table row.
+func escapeMarkdownCell(s string) string {
+	s = strings.ReplaceAll(s, "|", `\|`)
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	return s
 }
 
 func formatMarkdownLinks(links map[string]model.LinkResult) string {

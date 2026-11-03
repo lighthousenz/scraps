@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/lighthousenz/scraps/internal/model"
@@ -66,12 +67,14 @@ func actorOrderFromSteps(scenario *model.Scenario) []string {
 			}
 		}
 	}
+	var leftover []string
 	for name := range scenario.Actors {
 		if !seen[name] {
-			seen[name] = true
-			order = append(order, name)
+			leftover = append(leftover, name)
 		}
 	}
+	sort.Strings(leftover)
+	order = append(order, leftover...)
 	return order
 }
 
@@ -98,8 +101,7 @@ func renderSingleTarget(step model.Step, idx int, opts MermaidOpts, actorPos map
 }
 
 func renderGroupTarget(step model.Step, idx int, opts MermaidOpts, actorPos map[string]int) string {
-	first := step.Targets[0]
-	last := step.Targets[len(step.Targets)-1]
+	first, last := noteRange(step.Targets, actorPos)
 	op := step.Operation
 
 	switch op {

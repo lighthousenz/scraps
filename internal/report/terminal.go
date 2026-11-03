@@ -5,6 +5,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/lighthousenz/scraps/internal/model"
 )
@@ -84,29 +85,38 @@ func formatResultLine(r model.ScenarioResult, failOn map[model.Verdict]bool, opt
 		verdict = strings.ToUpper(verdict)
 	}
 
-	// Colour the verdict.
+	// Pad the verdict to a fixed visible width before wrapping in colour
+	// codes, so ANSI escape bytes do not misalign columns.
+	verdict = fmt.Sprintf("%-14s", verdict)
+
 	if opts.Color {
+		plain := strings.TrimRight(verdict, " ")
+		pad := verdict[len(plain):]
 		switch {
 		case r.Verdict == model.VerdictAsExpected:
-			verdict = colGreen + verdict + colReset
+			verdict = colGreen + plain + colReset + pad
 		case r.Verdict == model.VerdictBroken || r.Verdict == model.VerdictRegressed:
-			verdict = colRed + verdict + colReset
+			verdict = colRed + plain + colReset + pad
 		case failOn[r.Verdict]:
-			verdict = colYellow + verdict + colReset
+			verdict = colYellow + plain + colReset + pad
 		}
 	}
 
-	// Title truncation — cap at 40 chars.
+	// Title truncation — cap at 40 runes to avoid cutting mid-character.
 	title := r.Title
 	const maxTitle = 40
-	if len(title) > maxTitle {
-		title = title[:maxTitle-1] + "…"
+	if utf8.RuneCountInString(title) > maxTitle {
+		runes := []rune(title)
+		title = string(runes[:maxTitle-1]) + "…"
 	}
 
 	// Outcome: "expected → actual" when they differ.
 	outcome := r.Actual
 	if r.Expected != r.Actual && r.Verdict != model.VerdictBroken {
 		outcome = fmt.Sprintf("%s → %s", r.Expected, r.Actual)
+	}
+	if len(r.Overlapping) > 0 {
+		outcome = fmt.Sprintf("%s → overlapping: %s", r.Expected, strings.Join(r.Overlapping, ", "))
 	}
 	if r.Verdict == model.VerdictBroken {
 		outcome = ""
@@ -117,26 +127,38 @@ func formatResultLine(r model.ScenarioResult, failOn map[model.Verdict]bool, opt
 
 	// Format the line to match the sample output.
 	if outcome != "" {
-		return fmt.Sprintf("  %-10s %-42s %-14s %-20s %s", r.ID, title, verdict, outcome, duration)
+		return fmt.Sprintf("  %-10s %-42s %s %-20s %s", r.ID, title, verdict, outcome, duration)
 	}
-	return fmt.Sprintf("  %-10s %-42s %-14s %s", r.ID, title, verdict, duration)
+	return fmt.Sprintf("  %-10s %-42s %s %s", r.ID, title, verdict, duration)
 }
 
 func commonArtefactsDir(results []model.ScenarioResult) string {
 	if len(results) == 0 {
 		return ""
 	}
-	// Find the common directory prefix.
-	prefix := results[0].Artefacts
+
+	// parentDir returns the parent of a per-scenario artefacts path,
+	// which is the run directory.
+	parentDir := func(p string) string {
+		trimmed := strings.TrimRight(p, "/")
+		idx := strings.LastIndex(trimmed, "/")
+		if idx < 0 {
+			return ""
+		}
+		return trimmed[:idx+1]
+	}
+
+	// Start from the parent of the first result's artefacts directory.
+	prefix := parentDir(results[0].Artefacts)
+	if prefix == "" {
+		return ""
+	}
 	for _, r := range results[1:] {
 		for !strings.HasPrefix(r.Artefacts, prefix) {
-			// Trim trailing slash before looking for the parent directory.
-			trimmed := strings.TrimRight(prefix, "/")
-			idx := strings.LastIndex(trimmed, "/")
-			if idx < 0 {
+			prefix = parentDir(prefix)
+			if prefix == "" {
 				return ""
 			}
-			prefix = trimmed[:idx+1]
 		}
 	}
 	return prefix

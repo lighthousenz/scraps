@@ -60,9 +60,11 @@ func JUnit(w io.Writer, report *model.RunReport, failOn map[model.Verdict]bool) 
 			tc.Error = &junitError{Message: r.Reason}
 		case failOn[r.Verdict]:
 			suite.Failures++
-			tc.Failure = &junitFailure{
-				Message: fmt.Sprintf("expected %s, got %s (%s)", r.Expected, r.Actual, r.Verdict),
+			msg := fmt.Sprintf("expected %s, got %s (%s)", r.Expected, r.Actual, r.Verdict)
+			if len(r.Overlapping) > 0 {
+				msg = fmt.Sprintf("expected %s, got overlapping: %s (%s)", r.Expected, strings.Join(r.Overlapping, ", "), r.Verdict)
 			}
+			tc.Failure = &junitFailure{Message: msg}
 		default:
 			tc.SystemOut = string(r.Verdict)
 		}

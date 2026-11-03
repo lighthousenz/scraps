@@ -17,7 +17,7 @@
       <failure message="expected drops-one, got duplicates (changed)"></failure>
     </testcase>
     <testcase classname="DOC-0080" name="DOC-0080 Overlapping outcomes [docengine=2.31.0]">
-      <failure message="expected correct, got  (unrecognised)"></failure>
+      <failure message="expected correct, got overlapping: correct, shouts (unrecognised)"></failure>
     </testcase>
     <testcase classname="DOC-0090" name="DOC-0090 Actor crashed [docengine=2.31.0]">
       <error message="actor alice: protocol violation: non-JSON on stdout"></error>
