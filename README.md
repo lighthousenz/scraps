@@ -681,6 +681,13 @@ Run it in CI.
 
 ## CLI
 
+Global flags (before any subcommand):
+
+| Flag | Meaning |
+|---|---|
+| `--version` | Print version and exit. |
+| `--help` | Show usage and exit. |
+
 | Command | What it does |
 |---|---|
 | `scraps init` | Writes a starter `scraps.yaml` and an example scenario. |
@@ -689,7 +696,7 @@ Run it in CI.
 | `scraps validate [paths…]` | Full static validation. Exits 2 on any problem. |
 | `scraps run [paths…]` | Runs scenarios and prints verdicts. |
 | `scraps diagram <scenario>` | Prints the scenario as a Mermaid sequence diagram. |
-| `scraps explain <scenario>` | Shows the history, which `when` matches the given subjects, and the last recorded verdict. |
+| `scraps explain [--subject name=version] <scenario>` | Shows the history, which `when` matches the given subjects, and the last recorded verdict. `--subject` is repeatable. |
 
 `scraps run` flags:
 

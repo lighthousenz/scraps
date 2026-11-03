@@ -29,3 +29,34 @@ hint = "Run `mise bootstrap`."
 description = "golangci-lint is installed"
 run = "golangci-lint version"
 hint = "Run `mise bootstrap`."
+
+# Build tasks — see AGENTS.md "Build and test".
+
+[tasks.build]
+description = "Build the scraps binary into dist/"
+run = """
+mkdir -p dist
+go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o dist/scraps ./cmd/scraps
+"""
+
+[tasks.test]
+description = "Run tests with race detector"
+usage = 'arg "[args]" var=#true double_dash="automatic"'
+run = "go test -race ${usage_args:-./...}"
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.fmt]
+description = "Format code with golangci-lint"
+run = "golangci-lint fmt"
+
+[tasks.check]
+description = "The gate: fmt check, lint, build, test"
+run = """
+golangci-lint fmt --diff && \
+golangci-lint run && \
+mise run build && \
+mise run test
+"""
