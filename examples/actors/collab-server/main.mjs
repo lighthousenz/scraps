@@ -115,6 +115,8 @@ async function handleRequest(req) {
       outputs: { url: `ws://127.0.0.1:${port}` },
     });
   } else if (method === "scraps/shutdown") {
+    // Save state before destroy — saveState reads the live document from
+    // the server, so we must call it while the server still holds it.
     await saveState();
 
     if (server) {
@@ -134,8 +136,22 @@ async function handleRequest(req) {
 }
 
 async function saveState() {
-  if (seedDoc && workdir) {
-    const state = Y.encodeStateAsUpdate(seedDoc);
+  if (!workdir) return;
+
+  // Encode the live room document held by the Hocuspocus server when
+  // available, so that pending (not-yet-debounced) edits are captured.
+  // Fall back to seedDoc only when the server has no documents yet.
+  let doc = seedDoc;
+  if (server) {
+    const docs = server.documents;
+    if (docs && docs.size > 0) {
+      // There is exactly one room ("room"); grab the first live document.
+      doc = docs.values().next().value;
+    }
+  }
+
+  if (doc) {
+    const state = Y.encodeStateAsUpdate(doc);
     const roomBinPath = join(workdir, "room.bin");
     writeFileSync(roomBinPath, Buffer.from(state));
     log("info", "saved room state to room.bin");
@@ -148,11 +164,16 @@ const rl = createInterface({ input: process.stdin, terminal: false });
 
 rl.on("line", async (line) => {
   if (!line.trim()) return;
+  let reqId;
   try {
     const req = JSON.parse(line);
+    reqId = req.id;
     await handleRequest(req);
   } catch (err) {
     process.stderr.write(`collab-server error: ${err.message}\n`);
+    if (reqId !== undefined) {
+      respondError(reqId, 1001, err.message);
+    }
   }
 });
 

@@ -49,10 +49,16 @@ def main():
         if not line:
             continue
 
-        req = json.loads(line)
+        id_ = None
+        try:
+            req = json.loads(line)
+            id_ = req.get("id")
+        except json.JSONDecodeError as e:
+            sys.stderr.write(f"paragraphs-checker: invalid JSON: {e}\n")
+            continue
+
         method = req.get("method")
         params = req.get("params", {})
-        id_ = req.get("id")
 
         if method == "scraps/initialize":
             respond(id_, {"protocol": 1, "outputs": {}})
@@ -66,7 +72,7 @@ def main():
             texts = params.get("texts", [])
             paragraphs, err = load_artefact(artefact)
             if err:
-                respond(id_, {"match": False, "reason": err})
+                respond_error(id_, 1001, err)
                 continue
             missing = [t for t in texts if t not in paragraphs]
             if missing:
@@ -79,7 +85,7 @@ def main():
             texts = params.get("texts", [])
             paragraphs, err = load_artefact(artefact)
             if err:
-                respond(id_, {"match": False, "reason": err})
+                respond_error(id_, 1001, err)
                 continue
             present = [t for t in texts if t in paragraphs]
             if len(present) == 1:
@@ -91,7 +97,7 @@ def main():
             artefact = params.get("artefact", {})
             paragraphs, err = load_artefact(artefact)
             if err:
-                respond(id_, {"match": False, "reason": err})
+                respond_error(id_, 1001, err)
                 continue
             count = len(paragraphs)
             equals = params.get("equals")

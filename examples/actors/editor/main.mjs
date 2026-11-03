@@ -8,7 +8,7 @@
  * Speaks the Scraps JSON-RPC actor protocol on stdin/stdout.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -41,10 +41,24 @@ function log(level, message) {
   process.stdout.write(msg + "\n");
 }
 
+// --- Helpers ---
+
+/**
+ * Derive a deterministic Yjs clientID from the scenario seed and the
+ * actor's name so that concurrent insert ordering is reproducible.
+ */
+function clientIDFromSeed(seed, name) {
+  const hash = createHmac("sha256", String(seed)).update(name).digest();
+  // Yjs clientIDs are unsigned 32-bit integers.
+  return hash.readUInt32BE(0);
+}
+
 // --- State ---
 
 let artefactsDir = process.env.SCRAPS_ARTEFACTS || ".";
 let serverUrl = null;
+let actorSeed = 0;
+let actorName = "";
 let ydoc = null;
 let provider = null;
 let synced = false;
@@ -67,6 +81,8 @@ async function handleRequest(req) {
     const inputs = params.inputs || {};
     artefactsDir =
       params.artefacts || process.env.SCRAPS_ARTEFACTS || ".";
+    actorSeed = params.seed ?? 0;
+    actorName = params.name ?? "";
 
     // Get the server URL from the actor-typed input
     const serverInput = inputs.server;
@@ -89,6 +105,7 @@ async function handleRequest(req) {
     }
 
     ydoc = new Y.Doc();
+    ydoc.clientID = clientIDFromSeed(actorSeed, actorName);
 
     provider = new HocuspocusProvider({
       url: serverUrl,
@@ -222,11 +239,16 @@ const rl = createInterface({ input: process.stdin, terminal: false });
 
 rl.on("line", async (line) => {
   if (!line.trim()) return;
+  let reqId;
   try {
     const req = JSON.parse(line);
+    reqId = req.id;
     await handleRequest(req);
   } catch (err) {
     process.stderr.write(`editor error: ${err.stack}\n`);
+    if (reqId !== undefined) {
+      respondError(reqId, 1001, err.message);
+    }
   }
 });
 

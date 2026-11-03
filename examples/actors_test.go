@@ -165,6 +165,24 @@ func startActor(t *testing.T, ctx context.Context, actorDir string, tools map[st
 	return client, cmd
 }
 
+// pollUntil polls condition at the given interval until it returns true or
+// the context deadline passes. On timeout it calls t.Fatal with what.
+func pollUntil(t *testing.T, ctx context.Context, interval time.Duration, what string, condition func() bool) {
+	t.Helper()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for %s", what)
+		case <-ticker.C:
+		}
+	}
+}
+
 // copyDir copies a directory tree.
 func copyDir(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
@@ -197,7 +215,7 @@ func copyDir(src, dst string) error {
 
 func TestToyActor(t *testing.T) {
 	if _, err := exec.LookPath("mise"); err != nil {
-		t.Skip("mise not on PATH")
+		t.Fatal("mise not on PATH")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -455,7 +473,7 @@ func TestToyActor(t *testing.T) {
 
 func TestParagraphsChecker(t *testing.T) {
 	if _, err := exec.LookPath("mise"); err != nil {
-		t.Skip("mise not on PATH")
+		t.Fatal("mise not on PATH")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -595,7 +613,7 @@ func TestParagraphsChecker(t *testing.T) {
 
 func TestCollabActors(t *testing.T) {
 	if _, err := exec.LookPath("mise"); err != nil {
-		t.Skip("mise not on PATH")
+		t.Fatal("mise not on PATH")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -699,8 +717,8 @@ func TestCollabActors(t *testing.T) {
 		t.Errorf("server url = %q, want ws://127.0.0.1:*", serverURL)
 	}
 
-	// Wait for server to be listening
-	for i := 0; i < 50; i++ {
+	// Wait for server to be listening (deadline from ctx, not a fixed count)
+	pollUntil(t, ctx, 50*time.Millisecond, "server listening", func() bool {
 		result, err := serverClient.call("status", map[string]interface{}{})
 		if err != nil {
 			t.Fatalf("server status: %v", err)
@@ -711,11 +729,8 @@ func TestCollabActors(t *testing.T) {
 		if err := json.Unmarshal(result, &s); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if s.Listening {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return s.Listening
+	})
 
 	// Start two editors
 	startEditor := func(name string, artefactsDir string) (*ndjsonClient, *exec.Cmd) {
@@ -761,9 +776,9 @@ func TestCollabActors(t *testing.T) {
 		t.Fatalf("bob connect: %v", err)
 	}
 
-	// Wait for both to sync
+	// Wait for both to sync (deadline from ctx, not a fixed count)
 	waitForSync := func(name string, client *ndjsonClient) {
-		for i := 0; i < 100; i++ {
+		pollUntil(t, ctx, 50*time.Millisecond, name+" synced", func() bool {
 			result, err := client.call("status", map[string]interface{}{})
 			if err != nil {
 				t.Fatalf("%s status: %v", name, err)
@@ -774,12 +789,8 @@ func TestCollabActors(t *testing.T) {
 			if err := json.Unmarshal(result, &s); err != nil {
 				t.Fatalf("unmarshal: %v", err)
 			}
-			if s.Synced {
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-		t.Fatalf("%s did not sync in time", name)
+			return s.Synced
+		})
 	}
 
 	waitForSync("alice", aliceClient)
@@ -818,7 +829,7 @@ func TestCollabActors(t *testing.T) {
 
 	// Wait for convergence: both editors should have the same digest
 	t.Log("waiting for convergence...")
-	for i := 0; i < 200; i++ {
+	pollUntil(t, ctx, 100*time.Millisecond, "editors converged", func() bool {
 		aliceResult, err := aliceClient.call("digest", map[string]interface{}{})
 		if err != nil {
 			t.Fatalf("alice digest: %v", err)
@@ -840,13 +851,10 @@ func TestCollabActors(t *testing.T) {
 
 		if ad.Value == bd.Value && ad.Value != "" {
 			t.Logf("converged with digest %s", ad.Value)
-			break
+			return true
 		}
-		if i == 199 {
-			t.Fatal("editors did not converge in time")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		return false
+	})
 
 	// Take snapshot from alice
 	_, err = aliceClient.call("snapshot", map[string]interface{}{"as": "final"})
