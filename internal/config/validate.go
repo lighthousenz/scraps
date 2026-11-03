@@ -631,6 +631,10 @@ func validateParams(params map[string]any, declaredParams map[string]any, path s
 				problems = append(problems, prob(path, node, fmt.Sprintf("%s: cannot decode param schema: %s", context, err)))
 			} else {
 				compiler := jsonschema.NewCompiler()
+				// Prevent $ref / external schema resolution from reading the filesystem.
+				// Param schemas are in-memory type/enum/items/default declarations and must
+				// never trigger file I/O.
+				compiler.UseLoader(denyLoader{})
 				if err := compiler.AddResource("schema.json", decoded); err != nil {
 					problems = append(problems, prob(path, node, fmt.Sprintf("%s: invalid param schema: %s", context, err)))
 				} else {
@@ -706,19 +710,32 @@ func buildActorScope(def *model.ActorDefinition, lp *LoadedProject) *expr.Static
 	for inputName, inputDef := range def.Inputs {
 		info := expr.InputInfo{IsActor: inputDef.Type == "actor"}
 		if info.IsActor && inputDef.Kind != "" {
-			// Union outputs from ALL definitions matching this kind,
-			// so the check is deterministic regardless of map iteration order.
+			// Intersect outputs from ALL definitions matching this kind.
+			// A reference is accepted only when every implementation that
+			// can satisfy this input declares that output. This avoids
+			// false-ok validation that would fail at runtime when wired to
+			// an implementation that lacks the output.
+			first := true
 			for _, actorDef := range lp.Actors {
 				kind := actorDef.Kind
 				if kind == "" {
 					kind = actorDef.Name
 				}
-				if kind == inputDef.Kind {
-					if info.Outputs == nil {
-						info.Outputs = make(map[string]bool)
-					}
+				if kind != inputDef.Kind {
+					continue
+				}
+				if first {
+					info.Outputs = make(map[string]bool)
 					for outName := range actorDef.Outputs {
 						info.Outputs[outName] = true
+					}
+					first = false
+				} else {
+					// Keep only outputs present in this definition too.
+					for outName := range info.Outputs {
+						if _, ok := actorDef.Outputs[outName]; !ok {
+							delete(info.Outputs, outName)
+						}
 					}
 				}
 			}
@@ -742,6 +759,15 @@ func validateActorExprs(def *model.ActorDefinition, actorPath string, scope *exp
 	walkLifecycleExprs(def.Lifecycle.Stop)
 	walkLifecycleExprs(def.Lifecycle.Collect)
 	return problems
+}
+
+// denyLoader is a jsonschema.URLLoader that refuses to load any external resource.
+// It prevents $ref, $dynamicRef, and $schema from reading the filesystem or network
+// during param schema compilation.
+type denyLoader struct{}
+
+func (denyLoader) Load(url string) (any, error) {
+	return nil, fmt.Errorf("external schema references are not allowed in param schemas: %s", url)
 }
 
 func prob(path string, node *yaml.Node, msg string) Problem {

@@ -1067,10 +1067,12 @@ func TestValidate_StepErrorMessageMapNoMatches(t *testing.T) {
 
 // --- buildActorScope determinism ---
 
-func TestValidate_BuildActorScopeDeterministic(t *testing.T) {
-	// Two definitions share kind "collab-server" but only one declares output "ws-url".
-	// buildActorScope must union outputs from all matching definitions so the check
-	// is deterministic regardless of map iteration order.
+func TestValidate_BuildActorScopeIntersection(t *testing.T) {
+	// Two definitions share kind "collab-server": impl-a declares only "url",
+	// impl-b declares "url" and "ws-url". buildActorScope must intersect
+	// outputs so that only outputs present in ALL matching definitions are
+	// accepted — a reference to "ws-url" must be rejected because impl-a
+	// does not declare it and the scenario could wire to impl-a at runtime.
 	lp := minimalProject()
 	lp.Actors["impl-a"] = &model.ActorDefinition{
 		Name: "impl-a",
@@ -1089,7 +1091,6 @@ func TestValidate_BuildActorScopeDeterministic(t *testing.T) {
 		},
 		Operations: map[string]model.OperationDef{},
 	}
-	// An editor that references inputs.srv.outputs.ws-url
 	lp.Actors["ws-editor"] = &model.ActorDefinition{
 		Name:     "ws-editor",
 		Kind:     "ws-editor",
@@ -1097,13 +1098,10 @@ func TestValidate_BuildActorScopeDeterministic(t *testing.T) {
 		Inputs: map[string]model.InputDef{
 			"srv": {Type: "actor", Kind: "collab-server"},
 		},
-		Lifecycle: model.Lifecycle{},
-		Operations: map[string]model.OperationDef{
-			"noop": {},
-		},
+		Lifecycle:  model.Lifecycle{},
+		Operations: map[string]model.OperationDef{"noop": {}},
 	}
 
-	// Verify that buildActorScope unions outputs from both impl-a and impl-b
 	scope := buildActorScope(lp.Actors["ws-editor"], lp)
 	info := scope.Inputs["srv"]
 	if !info.IsActor {
@@ -1112,21 +1110,90 @@ func TestValidate_BuildActorScopeDeterministic(t *testing.T) {
 	if info.Outputs == nil {
 		t.Fatal("expected outputs to be populated")
 	}
-	// Both "url" (from both) and "ws-url" (from impl-b only) must be present
+	// "url" is in both, so it must be in the intersection.
 	if !info.Outputs["url"] {
-		t.Error("expected output 'url' in union")
+		t.Error("expected output 'url' in intersection")
 	}
-	if !info.Outputs["ws-url"] {
-		t.Error("expected output 'ws-url' in union")
+	// "ws-url" is only in impl-b, so the intersection must exclude it.
+	if info.Outputs["ws-url"] {
+		t.Error("output 'ws-url' should NOT be in intersection (only impl-b declares it)")
 	}
 
-	// Run 100 iterations to verify determinism (Go randomizes map order)
+	// Verify determinism across 100 iterations (Go randomizes map order).
 	for i := 0; i < 100; i++ {
 		s := buildActorScope(lp.Actors["ws-editor"], lp)
-		info := s.Inputs["srv"]
-		if !info.Outputs["ws-url"] {
-			t.Fatalf("iteration %d: output 'ws-url' missing from scope (non-deterministic)", i)
+		srvInfo := s.Inputs["srv"]
+		if !srvInfo.Outputs["url"] {
+			t.Fatalf("iteration %d: output 'url' missing from intersection (non-deterministic)", i)
 		}
+		if srvInfo.Outputs["ws-url"] {
+			t.Fatalf("iteration %d: output 'ws-url' should not be in intersection (non-deterministic)", i)
+		}
+	}
+}
+
+func TestValidate_BuildActorScopeIntersectionRejectsRef(t *testing.T) {
+	// Verify that a reference to an output only some implementations declare
+	// is reported as an error by validateActorExprs.
+	lp := minimalProject()
+	lp.Actors["impl-a"] = &model.ActorDefinition{
+		Name:       "impl-a",
+		Kind:       "collab-server",
+		Outputs:    map[string]model.OutputDef{"url": {Type: "string"}},
+		Operations: map[string]model.OperationDef{},
+	}
+	lp.Actors["impl-b"] = &model.ActorDefinition{
+		Name:       "impl-b",
+		Kind:       "collab-server",
+		Outputs:    map[string]model.OutputDef{"url": {Type: "string"}, "ws-url": {Type: "string"}},
+		Operations: map[string]model.OperationDef{},
+	}
+	// An actor that references inputs.srv.outputs.ws-url — should fail validation
+	lp.Actors["ws-editor"] = &model.ActorDefinition{
+		Name: "ws-editor", Kind: "ws-editor", Protocol: 1,
+		Inputs: map[string]model.InputDef{
+			"srv": {Type: "actor", Kind: "collab-server"},
+		},
+		Lifecycle: model.Lifecycle{
+			Start: []model.LifecycleEntry{
+				{"connect": map[string]any{"url": "${{ inputs.srv.outputs.ws-url }}"}},
+			},
+		},
+		Operations: map[string]model.OperationDef{"noop": {}},
+	}
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, `has no output "ws-url"`) {
+		t.Errorf("expected missing output problem for ws-url, got %v", problems)
+	}
+}
+
+// --- Param schema $ref blocked ---
+
+func TestValidate_ParamSchemaRefBlocked(t *testing.T) {
+	// A $ref in a param schema must not trigger filesystem reads.
+	// The compiler's denyLoader rejects external references.
+	lp := minimalProject()
+	lp.Actors["editor"].Operations["insert-paragraph"] = model.OperationDef{
+		Params: map[string]any{
+			"at":   map[string]any{"$ref": "/etc/passwd"},
+			"text": map[string]any{"type": "string"},
+		},
+	}
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	ls.Scenario.Steps = []model.Step{
+		{Targets: []string{"alice"}, Operation: "insert-paragraph", Params: map[string]any{
+			"at": "start", "text": "hi",
+		}},
+		{Targets: []string{"srv"}, Operation: "snapshot", Params: map[string]any{"as": "final"}},
+	}
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, "external schema references are not allowed") && !containsProblem(problems, "invalid param schema") {
+		t.Errorf("expected $ref to be blocked, got %v", problems)
 	}
 }
 
