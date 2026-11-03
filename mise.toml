@@ -31,6 +31,11 @@ description = "golangci-lint is installed"
 run = "golangci-lint version"
 hint = "Run `mise bootstrap`."
 
+[doctor.checks.goreleaser]
+description = "goreleaser is installed"
+run = "goreleaser --version"
+hint = "Run `mise bootstrap`."
+
 # Build tasks — see AGENTS.md "Build and test".
 
 [tasks.build]
