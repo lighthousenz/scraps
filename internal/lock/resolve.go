@@ -170,6 +170,7 @@ func runGit(ctx context.Context, dir string, args ...string) error {
 		"-c", "filter.lfs.smudge=",
 		"-c", "filter.lfs.process=",
 		"-c", "filter.lfs.clean=",
+		"-c", "filter.lfs.required=false",
 	}, args...)
 	cmd := exec.CommandContext(ctx, "git", fullArgs...)
 	cmd.Dir = dir

@@ -469,20 +469,27 @@ func convertJSONSchemaMap(m map[string]any) M {
 }
 
 func buildOutcomesSchema(lp *config.LoadedProject) M {
-	// Build a single object schema whose properties are all known check
-	// keys (built-in + checker). Multiple checks per artefact are allowed.
+	// Build the artefact-value schema: an object whose properties are all
+	// known check keys (built-in + checker). Multiple checks per artefact
+	// are allowed.
 	checkProps := buildCheckProperties(lp)
+	artefactSchema := obj(
+		prop("type", "object"),
+		prop("properties", obj(checkProps...)),
+		prop("minProperties", 1),
+	)
 
-	// Outcome value: either artefact checks (with optional step-error),
-	// or step-error alone.
-	checkProps = append(checkProps, prop("step-error", buildStepErrorSchema()))
-
+	// Each outcome value is an object whose keys are artefact names
+	// (validated via additionalProperties) plus an optional step-error.
 	return obj(
 		prop("type", "object"),
 		prop("description", "Named outcomes: sets of checks against artefacts."),
 		prop("additionalProperties", obj(
 			prop("type", "object"),
-			prop("properties", obj(checkProps...)),
+			prop("properties", obj(
+				prop("step-error", buildStepErrorSchema()),
+			)),
+			prop("additionalProperties", artefactSchema),
 			prop("minProperties", 1),
 		)),
 	)

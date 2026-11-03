@@ -294,147 +294,6 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "file-exists": {
-            "type": "string",
-            "description": "Check that a file exists in the artefact directory."
-          },
-          "json": {
-            "type": "object",
-            "description": "Check a JSON value at a path.",
-            "properties": {
-              "file": {
-                "type": "string"
-              },
-              "path": {
-                "type": "string"
-              },
-              "equals": {}
-            },
-            "required": [
-              "path",
-              "equals"
-            ],
-            "additionalProperties": false
-          },
-          "text": {
-            "type": "object",
-            "description": "Check file text content with a regex.",
-            "properties": {
-              "file": {
-                "type": "string"
-              },
-              "matches": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "file",
-              "matches"
-            ],
-            "additionalProperties": false
-          },
-          "has-text": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "texts": {
-                    "anyOf": [
-                      {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "\\$\\{\\{"
-                      }
-                    ]
-                  }
-                },
-                "additionalProperties": false
-              },
-              {
-                "anyOf": [
-                  {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "\\$\\{\\{"
-                  }
-                ]
-              }
-            ]
-          },
-          "word-count": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "equals": {
-                    "anyOf": [
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "\\$\\{\\{"
-                      }
-                    ]
-                  }
-                },
-                "additionalProperties": false
-              },
-              {
-                "anyOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "\\$\\{\\{"
-                  }
-                ]
-              }
-            ]
-          },
-          "line-count": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "greater-than": {
-                    "anyOf": [
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "\\$\\{\\{"
-                      }
-                    ]
-                  }
-                },
-                "additionalProperties": false
-              },
-              {
-                "anyOf": [
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "\\$\\{\\{"
-                  }
-                ]
-              }
-            ]
-          },
           "step-error": {
             "type": "object",
             "description": "Match a step failure.",
@@ -467,6 +326,153 @@
             },
             "additionalProperties": false
           }
+        },
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "file-exists": {
+              "type": "string",
+              "description": "Check that a file exists in the artefact directory."
+            },
+            "json": {
+              "type": "object",
+              "description": "Check a JSON value at a path.",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "equals": {}
+              },
+              "required": [
+                "path",
+                "equals"
+              ],
+              "additionalProperties": false
+            },
+            "text": {
+              "type": "object",
+              "description": "Check file text content with a regex.",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "matches": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file",
+                "matches"
+              ],
+              "additionalProperties": false
+            },
+            "has-text": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "texts": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "\\$\\{\\{"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "\\$\\{\\{"
+                    }
+                  ]
+                }
+              ]
+            },
+            "word-count": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "equals": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "\\$\\{\\{"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "\\$\\{\\{"
+                    }
+                  ]
+                }
+              ]
+            },
+            "line-count": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "greater-than": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "\\$\\{\\{"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "\\$\\{\\{"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "minProperties": 1
         },
         "minProperties": 1
       }
