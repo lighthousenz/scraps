@@ -3,6 +3,7 @@ package verdict
 import (
 	"fmt"
 	"regexp"
+	"sort"
 
 	"github.com/Masterminds/semver/v3"
 
@@ -42,7 +43,15 @@ func matchEntry(
 	subjects map[string]model.Subject,
 	versions map[string]string,
 ) (bool, error) {
-	for name, constraint := range entry.When {
+	// Iterate in sorted key order for deterministic error reporting.
+	names := make([]string, 0, len(entry.When))
+	for name := range entry.When {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		constraint := entry.When[name]
 		subj, ok := subjects[name]
 		if !ok {
 			return false, fmt.Errorf("unknown subject %q in when", name)
@@ -82,6 +91,10 @@ func matchSemver(constraint, version string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("invalid semver constraint %q: %w", constraint, err)
 	}
+	// Include pre-release versions in matching so that e.g. 2.33.0-rc.1
+	// is checked by precedence against >=2.31.0 <2.33.0, rather than
+	// silently skipped.
+	c.IncludePrerelease = true
 	return c.Check(v), nil
 }
 

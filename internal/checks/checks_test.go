@@ -166,13 +166,22 @@ func TestJSON(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "error: no json files without file param",
+			name: "no json files without file param is no-match not error",
 			art:  checks.Artefact{Name: "test", Dir: dir, Files: []string{"output.txt"}},
 			params: map[string]any{
 				"path":   "$.count",
 				"equals": float64(2),
 			},
-			wantErr: true,
+			wantMatch: false,
+		},
+		{
+			name: "no json files with empty artefact files is no-match",
+			art:  checks.Artefact{Name: "test", Dir: dir, Files: nil},
+			params: map[string]any{
+				"path":   "$.count",
+				"equals": float64(2),
+			},
+			wantMatch: false,
 		},
 		{
 			name:    "error: bad params type",
@@ -199,6 +208,15 @@ func TestJSON(t *testing.T) {
 		{
 			name: "error: bad path syntax",
 			art:  checks.Artefact{Name: "test", Dir: dir, Files: []string{"snapshot.json"}},
+			params: map[string]any{
+				"path":   "count",
+				"equals": float64(2),
+			},
+			wantErr: true,
+		},
+		{
+			name: "error: bad path with missing file is still an error",
+			art:  checks.Artefact{Name: "test", Dir: dir, Files: []string{"nonexistent.json"}},
 			params: map[string]any{
 				"path":   "count",
 				"equals": float64(2),
@@ -461,6 +479,78 @@ func TestJSONBooleanEquality(t *testing.T) {
 	}
 	if !result.Match {
 		t.Errorf("expected match for boolean, got: %s", result.Reason)
+	}
+}
+
+func TestJSONLengthOnObject(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"length": 3, "body": {"length": 10}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	art := checks.Artefact{Name: "test", Dir: dir, Files: []string{"data.json"}}
+
+	// Top-level "length" field.
+	result, err := checks.Run("json", art, map[string]any{
+		"path":   "$.length",
+		"equals": float64(3),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Match {
+		t.Errorf("expected match for $.length on object, got: %s", result.Reason)
+	}
+
+	// Nested "length" field.
+	result, err = checks.Run("json", art, map[string]any{
+		"path":   "$.body.length",
+		"equals": float64(10),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Match {
+		t.Errorf("expected match for $.body.length on object, got: %s", result.Reason)
+	}
+}
+
+func TestJSONLengthNonASCII(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"name": "héllo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	art := checks.Artefact{Name: "test", Dir: dir, Files: []string{"data.json"}}
+
+	// "héllo" is 5 characters, not 6 bytes.
+	result, err := checks.Run("json", art, map[string]any{
+		"path":   "$.name.length",
+		"equals": float64(5),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Match {
+		t.Errorf("expected match for rune count (5), got: %s", result.Reason)
+	}
+}
+
+func TestJSONUint64Equality(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), []byte(`{"val": 42}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	art := checks.Artefact{Name: "test", Dir: dir, Files: []string{"data.json"}}
+
+	// YAML can decode a large positive int as uint64.
+	result, err := checks.Run("json", art, map[string]any{
+		"path":   "$.val",
+		"equals": uint64(42),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Match {
+		t.Errorf("expected match for uint64 equals, got: %s", result.Reason)
 	}
 }
 

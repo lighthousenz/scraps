@@ -152,6 +152,65 @@ func TestEvalHistory(t *testing.T) {
 			want: verdict.HistoryResult{Expected: "correct", Index: -1},
 		},
 		{
+			name: "semver pre-release version matches constraint range",
+			history: []model.HistoryEntry{
+				{When: map[string]string{"lib": ">=2.31.0 <2.33.0"}, Expect: "drops-one"},
+			},
+			subjects: map[string]model.Subject{
+				"lib": {Scheme: "semver"},
+			},
+			versions: map[string]string{"lib": "2.32.0-rc.1"},
+			want:     verdict.HistoryResult{Expected: "drops-one", Index: 0},
+		},
+		{
+			name: "semver pre-release 2.33.0-rc.1 is less than 2.33.0 so matches <2.33.0",
+			history: []model.HistoryEntry{
+				{When: map[string]string{"lib": ">=2.31.0 <2.33.0"}, Expect: "drops-one"},
+			},
+			subjects: map[string]model.Subject{
+				"lib": {Scheme: "semver"},
+			},
+			versions: map[string]string{"lib": "2.33.0-rc.1"},
+			want:     verdict.HistoryResult{Expected: "drops-one", Index: 0},
+		},
+		{
+			name: "semver pre-release outside range does not match",
+			history: []model.HistoryEntry{
+				{When: map[string]string{"lib": ">=2.31.0 <2.33.0"}, Expect: "drops-one"},
+			},
+			subjects: map[string]model.Subject{
+				"lib": {Scheme: "semver"},
+			},
+			versions: map[string]string{"lib": "2.34.0-rc.1"},
+			want:     verdict.HistoryResult{Expected: "correct", Index: -1},
+		},
+		{
+			name: "semver pre-release beta version matches",
+			history: []model.HistoryEntry{
+				{When: map[string]string{"lib": ">=1.0.0"}, Expect: "new-era"},
+			},
+			subjects: map[string]model.Subject{
+				"lib": {Scheme: "semver"},
+			},
+			versions: map[string]string{"lib": "2.0.0-beta.1"},
+			want:     verdict.HistoryResult{Expected: "new-era", Index: 0},
+		},
+		{
+			name: "multi-subject error is deterministic with sorted keys",
+			history: []model.HistoryEntry{
+				{When: map[string]string{
+					"b-valid": ">=1.0.0",
+					"a-typo":  "1.0.0",
+				}, Expect: "bug"},
+			},
+			subjects: map[string]model.Subject{
+				"b-valid": {Scheme: "semver"},
+				// "a-typo" is not a declared subject
+			},
+			versions: map[string]string{"b-valid": "1.0.0"},
+			wantErr:  true,
+		},
+		{
 			name: "error: unknown subject in when",
 			history: []model.HistoryEntry{
 				{When: map[string]string{"unknown": "1.0.0"}, Expect: "bug"},

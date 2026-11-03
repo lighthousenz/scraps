@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Artefact describes an artefact produced by a run.
@@ -72,10 +73,21 @@ func runJSON(art Artefact, params any) (Result, error) {
 		return Result{}, fmt.Errorf("json: missing required param \"equals\"")
 	}
 
-	// Determine the file to read.
+	// Validate path before any file I/O, so bad params always produce an
+	// error regardless of artefact state.
+	segments, err := parseJSONPath(pathStr)
+	if err != nil {
+		return Result{}, fmt.Errorf("json: %w", err)
+	}
+
+	// Determine the file to read. A nil error with empty fileName means no
+	// .json file existed in the artefact (runtime data, not bad params).
 	fileName, err := resolveJSONFile(art, m)
 	if err != nil {
 		return Result{}, err
+	}
+	if fileName == "" {
+		return Result{Match: false, Reason: fmt.Sprintf("no .json file in artefact %q", art.Name)}, nil
 	}
 
 	absPath := filepath.Join(art.Dir, fileName)
@@ -87,11 +99,6 @@ func runJSON(art Artefact, params any) (Result, error) {
 	var parsed any
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		return Result{Match: false, Reason: fmt.Sprintf("malformed JSON in %q: %v", fileName, err)}, nil
-	}
-
-	segments, err := parseJSONPath(pathStr)
-	if err != nil {
-		return Result{}, fmt.Errorf("json: %w", err)
 	}
 
 	val, err := walkJSON(parsed, segments)
@@ -121,7 +128,9 @@ func resolveJSONFile(art Artefact, m map[string]any) (string, error) {
 		}
 	}
 	if len(jsonFiles) == 0 {
-		return "", fmt.Errorf("json: no .json file in artefact %q and no \"file\" param set", art.Name)
+		// No .json files is a runtime condition (the actor produced none),
+		// not a bad param. Return empty to signal no-match upstream.
+		return "", nil
 	}
 	if len(jsonFiles) > 1 {
 		return "", fmt.Errorf("json: artefact %q has %d .json files; set \"file\" param to disambiguate", art.Name, len(jsonFiles))
@@ -206,7 +215,15 @@ func walkJSON(val any, segments []jsonSegment) (any, error) {
 			case []any:
 				val = float64(len(v))
 			case string:
-				val = float64(len(v))
+				val = float64(utf8.RuneCountInString(v))
+			case map[string]any:
+				// When the current value is an object, treat .length as
+				// a key lookup so fields named "length" are accessible.
+				lv, ok := v["length"]
+				if !ok {
+					return nil, fmt.Errorf("key %q not found", "length")
+				}
+				val = lv
 			default:
 				return nil, fmt.Errorf(".length: expected array or string, got %T", val)
 			}
@@ -276,6 +293,9 @@ func toFloat(v any) *float64 {
 		f := float64(n)
 		return &f
 	case int32:
+		f := float64(n)
+		return &f
+	case uint64:
 		f := float64(n)
 		return &f
 	default:
