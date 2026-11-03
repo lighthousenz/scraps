@@ -1,0 +1,19 @@
+id: E2E-0003
+title: Overlapping outcomes give unrecognised
+
+actors:
+  toy: { uses: toy }
+
+steps:
+  - toy: { write: { text: hello } }
+  - toy: { snapshot: { as: result } }
+
+outcomes:
+  correct:
+    result:
+      json: { path: "$.text.length", equals: 5 }
+  shouts:
+    result:
+      json: { path: "$.text.length", equals: 5 }
+
+history: []

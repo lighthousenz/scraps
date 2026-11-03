@@ -1,0 +1,23 @@
+id: E2E-0002
+title: Expect empties at every version
+
+actors:
+  toy: { uses: toy }
+
+steps:
+  - toy: { write: { text: hello } }
+  - toy: { snapshot: { as: result } }
+
+outcomes:
+  correct:
+    result:
+      json: { path: "$.text", equals: "hello" }
+  empties:
+    result:
+      json: { path: "$.text", equals: "" }
+  shouts:
+    result:
+      json: { path: "$.text", equals: "HELLO" }
+
+history:
+  - { when: { toy: ">=0.0.0" }, expect: empties }

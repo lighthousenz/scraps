@@ -1,0 +1,10 @@
+{
+  "name": "editor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hocuspocus/provider": "^2.13.6",
+    "ws": "^8.18.0"
+  }
+}

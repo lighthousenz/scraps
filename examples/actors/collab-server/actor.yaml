@@ -1,0 +1,32 @@
+name: collab-server
+kind: collab-server
+description: A Hocuspocus-backed Yjs collaboration server.
+protocol: 1
+
+tools:
+  node: "22"
+
+prepare:
+  run: npm ci && npm install --no-save yjs@${{ subjects.yjs }}
+  cache-key: [yjs]
+
+run: node main.mjs
+
+inputs:
+  document: { type: string }
+
+outputs:
+  url: { type: string }
+
+lifecycle:
+  ready: listening
+  stop:
+    - save-state
+  collect: []
+
+conditions:
+  listening: { call: status, until: { listening: true }, every: 50ms }
+
+operations:
+  status:     { returns: { listening: { type: boolean } } }
+  save-state: {}

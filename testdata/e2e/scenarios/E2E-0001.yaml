@@ -1,0 +1,25 @@
+id: E2E-0001
+title: Toy verdict coverage
+
+actors:
+  toy: { uses: toy }
+
+steps:
+  - toy: { write: { text: hello } }
+  - toy: { snapshot: { as: result } }
+
+outcomes:
+  correct:
+    result:
+      json: { path: "$.text", equals: "hello" }
+  empties:
+    result:
+      json: { path: "$.text", equals: "" }
+  shouts:
+    result:
+      json: { path: "$.text", equals: "HELLO" }
+  write-fails:
+    step-error: { actor: toy, operation: write, message: "toy write failed" }
+
+history:
+  - { when: { toy: ">=2.0.0 <3.0.0" }, expect: empties }
