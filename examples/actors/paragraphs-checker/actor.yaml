@@ -1,0 +1,27 @@
+name: paragraphs-checker
+role: checker
+description: Checks paragraph content in JSON artefacts.
+protocol: 1
+
+tools:
+  python: "3.13"
+
+run: python main.py
+
+operations:
+  has-paragraphs:
+    params:
+      texts: { type: array, items: { type: string } }
+    returns:
+      match: { type: boolean }
+  has-one-of:
+    params:
+      texts: { type: array, items: { type: string } }
+    returns:
+      match: { type: boolean }
+  paragraph-count:
+    params:
+      equals: { type: integer }
+      greater-than: { type: integer }
+    returns:
+      match: { type: boolean }

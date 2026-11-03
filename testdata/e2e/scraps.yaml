@@ -1,0 +1,13 @@
+version: 1
+
+subjects:
+  toy:
+    scheme: semver
+    resolve: { env: TOY_VERSION }
+
+actors:
+  toy: ../../examples/actors/toy
+
+defaults:
+  step-timeout: 10s
+  ready-timeout: 2s

@@ -1,0 +1,9 @@
+{
+  "name": "collab-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@hocuspocus/server": "^2.13.6"
+  }
+}

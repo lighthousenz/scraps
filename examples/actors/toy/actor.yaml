@@ -1,0 +1,23 @@
+name: toy
+description: A minimal actor whose behaviour varies by subject major version, for verdict testing.
+protocol: 1
+
+tools:
+  python: "3.13"
+
+run: python main.py
+
+inputs: {}
+
+outputs: {}
+
+lifecycle:
+  ready: ready
+
+conditions:
+  ready: { call: status, until: { ready: true }, every: 50ms }
+
+operations:
+  write:    { params: { text: { type: string } } }
+  snapshot: { params: { as: { type: string } }, artefact: true }
+  status:   { returns: { ready: { type: boolean } } }
