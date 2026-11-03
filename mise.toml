@@ -9,6 +9,7 @@ min_version = "2026.10.20"
 [tools]
 go = "1.27.3"
 golangci-lint = "2.15.0"
+goreleaser = "2.19.0"
 
 [bootstrap.hooks.post-tools]
 run = "mise exec -- go version"
@@ -28,6 +29,11 @@ hint = "Run `mise bootstrap`."
 [doctor.checks.golangci-lint]
 description = "golangci-lint is installed"
 run = "golangci-lint version"
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.goreleaser]
+description = "goreleaser is installed"
+run = "goreleaser --version"
 hint = "Run `mise bootstrap`."
 
 # Build tasks — see AGENTS.md "Build and test".
@@ -60,3 +66,7 @@ golangci-lint run && \
 mise run build && \
 mise run test
 """
+
+[tasks."release:check"]
+description = "Validate goreleaser config and run a snapshot build"
+run = "goreleaser check && goreleaser release --snapshot --clean"
