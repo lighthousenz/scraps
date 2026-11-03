@@ -78,8 +78,16 @@
                 "default": "normal"
               },
               "port": {
-                "type": "integer",
-                "default": 8080
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "default": 8080
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{\\{"
+                  }
+                ]
               },
               "server": {
                 "type": "string",
@@ -250,9 +258,6 @@
                     {
                       "type": "object",
                       "properties": {
-                        "format": {
-                          "type": "string"
-                        },
                         "text": {
                           "type": "string"
                         }
@@ -262,6 +267,9 @@
                     {
                       "type": "object",
                       "properties": {
+                        "format": {
+                          "type": "string"
+                        },
                         "text": {
                           "type": "string"
                         }
@@ -284,185 +292,183 @@
       "type": "object",
       "description": "Named outcomes: sets of checks against artefacts.",
       "additionalProperties": {
-        "anyOf": [
-          {
-            "type": "object",
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "file-exists": {
-                      "type": "string",
-                      "description": "Check that a file exists in the artefact directory."
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "json": {
-                      "type": "object",
-                      "description": "Check a JSON value at a path.",
-                      "properties": {
-                        "file": {
-                          "type": "string"
-                        },
-                        "path": {
-                          "type": "string"
-                        },
-                        "equals": {}
-                      },
-                      "required": [
-                        "path",
-                        "equals"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "text": {
-                      "type": "object",
-                      "description": "Check file text content with a regex.",
-                      "properties": {
-                        "file": {
-                          "type": "string"
-                        },
-                        "matches": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "file",
-                        "matches"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "has-text": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "texts": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            }
-                          },
-                          "additionalProperties": false
-                        },
-                        {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        }
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "word-count": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "equals": {
-                              "type": "integer"
-                            }
-                          },
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "integer"
-                        }
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "line-count": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "greater-than": {
-                              "type": "integer"
-                            }
-                          },
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "integer"
-                        }
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              ]
-            }
+        "type": "object",
+        "properties": {
+          "file-exists": {
+            "type": "string",
+            "description": "Check that a file exists in the artefact directory."
           },
-          {
+          "json": {
             "type": "object",
+            "description": "Check a JSON value at a path.",
             "properties": {
-              "step-error": {
+              "file": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "equals": {}
+            },
+            "required": [
+              "path",
+              "equals"
+            ],
+            "additionalProperties": false
+          },
+          "text": {
+            "type": "object",
+            "description": "Check file text content with a regex.",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "matches": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "file",
+              "matches"
+            ],
+            "additionalProperties": false
+          },
+          "has-text": {
+            "anyOf": [
+              {
                 "type": "object",
-                "description": "Match a step failure.",
                 "properties": {
-                  "actor": {
-                    "type": "string"
-                  },
-                  "operation": {
-                    "type": "string"
-                  },
-                  "message": {
+                  "texts": {
                     "anyOf": [
                       {
-                        "type": "string"
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
                       },
                       {
-                        "type": "object",
-                        "properties": {
-                          "matches": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "matches"
-                        ],
-                        "additionalProperties": false
+                        "type": "string",
+                        "pattern": "\\$\\{\\{"
                       }
                     ]
                   }
                 },
                 "additionalProperties": false
+              },
+              {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{\\{"
+                  }
+                ]
+              }
+            ]
+          },
+          "word-count": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "equals": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\$\\{\\{"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{\\{"
+                  }
+                ]
+              }
+            ]
+          },
+          "line-count": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "greater-than": {
+                    "anyOf": [
+                      {
+                        "type": "integer"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\$\\{\\{"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{\\{"
+                  }
+                ]
+              }
+            ]
+          },
+          "step-error": {
+            "type": "object",
+            "description": "Match a step failure.",
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matches": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "matches"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
               }
             },
-            "required": [
-              "step-error"
-            ],
             "additionalProperties": false
           }
-        ]
+        },
+        "minProperties": 1
       }
     },
     "history": {

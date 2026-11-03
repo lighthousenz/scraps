@@ -216,7 +216,8 @@ type inputInfo struct {
 
 func collectAllInputs(lp *config.LoadedProject) map[string][]inputInfo {
 	result := make(map[string][]inputInfo)
-	for name, actor := range lp.Actors {
+	for _, name := range sortedKeys(lp.Actors) {
+		actor := lp.Actors[name]
 		for inputName, input := range actor.Inputs {
 			schema := inputDefToSchema(input)
 			schemaBytes, _ := json.Marshal(schema)
@@ -252,13 +253,32 @@ func inputDefToSchema(input model.InputDef) M {
 		} else {
 			items = append(items, prop("description", "Actor reference."))
 		}
-	} else {
-		items = append(items, prop("type", mapType(input.Type)))
-		if input.Default != nil {
-			items = append(items, prop("default", input.Default))
-		}
+		return M{items: items}
 	}
-	return M{items: items}
+
+	mapped := mapType(input.Type)
+	declaredSchema := obj(prop("type", mapped))
+	if input.Default != nil {
+		declaredSchema = obj(prop("type", mapped), prop("default", input.Default))
+	}
+
+	// String-typed inputs already accept expression strings.
+	if mapped == "string" {
+		return declaredSchema
+	}
+	// Non-string types also accept ${{ }} expression strings.
+	return obj(prop("anyOf", []any{
+		declaredSchema,
+		exprStringSchema(),
+	}))
+}
+
+// exprStringSchema returns a schema that matches ${{ }} expression strings.
+func exprStringSchema() M {
+	return obj(
+		prop("type", "string"),
+		prop("pattern", `\$\{\{`),
+	)
 }
 
 func buildStepsSchema(lp *config.LoadedProject) M {
@@ -325,7 +345,8 @@ func collectAllConditions(lp *config.LoadedProject) []string {
 func buildOperationObjectSchemas(lp *config.LoadedProject, conditions []string) []any {
 	opMap := make(map[string][]M)
 
-	for _, actor := range lp.Actors {
+	for _, actorName := range sortedKeys(lp.Actors) {
+		actor := lp.Actors[actorName]
 		for opName, opDef := range actor.Operations {
 			schema := operationParamsToSchema(opDef)
 			opMap[opName] = append(opMap[opName], schema)
@@ -411,7 +432,18 @@ func operationParamsToSchema(op model.OperationDef) M {
 func paramValueToSchema(v any) any {
 	switch val := v.(type) {
 	case map[string]any:
-		return convertJSONSchemaMap(val)
+		declared := convertJSONSchemaMap(val)
+		// If the declared schema has a non-string type, also accept
+		// ${{ }} expression strings, matching validate.go behaviour.
+		if t, ok := val["type"]; ok {
+			if ts, ok := t.(string); ok && ts != "string" {
+				return obj(prop("anyOf", []any{
+					declared,
+					exprStringSchema(),
+				}))
+			}
+		}
+		return declared
 	default:
 		return obj(prop("description", fmt.Sprintf("%v", v)))
 	}
@@ -437,125 +469,87 @@ func convertJSONSchemaMap(m map[string]any) M {
 }
 
 func buildOutcomesSchema(lp *config.LoadedProject) M {
-	// Build check schemas: built-in checks + checker operations.
-	checkSchemas := buildCheckSchemas(lp)
+	// Build a single object schema whose properties are all known check
+	// keys (built-in + checker). Multiple checks per artefact are allowed.
+	checkProps := buildCheckProperties(lp)
+
+	// Outcome value: either artefact checks (with optional step-error),
+	// or step-error alone.
+	checkProps = append(checkProps, prop("step-error", buildStepErrorSchema()))
 
 	return obj(
 		prop("type", "object"),
 		prop("description", "Named outcomes: sets of checks against artefacts."),
 		prop("additionalProperties", obj(
-			prop("anyOf", []any{
-				// Object form: artefact checks.
-				obj(
-					prop("type", "object"),
-					prop("additionalProperties", checkSchemas),
-				),
-				// step-error form.
-				obj(
-					prop("type", "object"),
-					prop("properties", obj(
-						prop("step-error", buildStepErrorSchema()),
-					)),
-					prop("required", []string{"step-error"}),
-					prop("additionalProperties", false),
-				),
-			}),
+			prop("type", "object"),
+			prop("properties", obj(checkProps...)),
+			prop("minProperties", 1),
 		)),
 	)
 }
 
-func buildCheckSchemas(lp *config.LoadedProject) M {
-	oneOfSchemas := []any{
+// buildCheckProperties returns one kv per known check key (built-in + checker operations).
+func buildCheckProperties(lp *config.LoadedProject) []kv {
+	props := []kv{
 		// file-exists
-		obj(
-			prop("type", "object"),
-			prop("properties", obj(
-				prop("file-exists", obj(
-					prop("type", "string"),
-					prop("description", "Check that a file exists in the artefact directory."),
-				)),
-			)),
-			prop("additionalProperties", false),
-		),
+		prop("file-exists", obj(
+			prop("type", "string"),
+			prop("description", "Check that a file exists in the artefact directory."),
+		)),
 		// json check
-		obj(
+		prop("json", obj(
 			prop("type", "object"),
+			prop("description", "Check a JSON value at a path."),
 			prop("properties", obj(
-				prop("json", obj(
-					prop("type", "object"),
-					prop("description", "Check a JSON value at a path."),
-					prop("properties", obj(
-						prop("file", obj(prop("type", "string"))),
-						prop("path", obj(prop("type", "string"))),
-						prop("equals", obj()),
-					)),
-					prop("required", []string{"path", "equals"}),
-					prop("additionalProperties", false),
-				)),
+				prop("file", obj(prop("type", "string"))),
+				prop("path", obj(prop("type", "string"))),
+				prop("equals", obj()),
 			)),
+			prop("required", []string{"path", "equals"}),
 			prop("additionalProperties", false),
-		),
+		)),
 		// text check
-		obj(
+		prop("text", obj(
 			prop("type", "object"),
+			prop("description", "Check file text content with a regex."),
 			prop("properties", obj(
-				prop("text", obj(
-					prop("type", "object"),
-					prop("description", "Check file text content with a regex."),
-					prop("properties", obj(
-						prop("file", obj(prop("type", "string"))),
-						prop("matches", obj(prop("type", "string"))),
-					)),
-					prop("required", []string{"file", "matches"}),
-					prop("additionalProperties", false),
-				)),
+				prop("file", obj(prop("type", "string"))),
+				prop("matches", obj(prop("type", "string"))),
 			)),
+			prop("required", []string{"file", "matches"}),
 			prop("additionalProperties", false),
-		),
+		)),
 	}
 
 	// Add checker operations.
 	for _, checker := range sortedCheckerDefs(lp) {
 		for _, opName := range sortedMapKeysFromOperations(checker.Operations) {
 			opDef := checker.Operations[opName]
-			paramSchema := checkerOperationSchema(opName, opDef)
-			oneOfSchemas = append(oneOfSchemas, paramSchema)
+			props = append(props, prop(opName, checkerOperationValueSchema(opDef)))
 		}
 	}
 
-	return obj(prop("anyOf", oneOfSchemas))
+	return props
 }
 
-func checkerOperationSchema(name string, op model.OperationDef) M {
+// checkerOperationValueSchema returns the value schema for a single checker
+// operation property. If the operation has exactly one param, it also accepts
+// that param's schema directly (shorthand form).
+func checkerOperationValueSchema(op model.OperationDef) any {
 	paramSchema := operationParamsToSchema(op)
 
-	items := []kv{
-		prop(name, paramSchema),
-	}
-
-	// A check whose operation has exactly one param also accepts that param's schema directly.
 	if len(op.Params) == 1 {
 		for _, v := range op.Params {
 			return obj(
-				prop("type", "object"),
-				prop("properties", obj(
-					prop(name, obj(
-						prop("anyOf", []any{
-							paramSchema,
-							paramValueToSchema(v),
-						}),
-					)),
-				)),
-				prop("additionalProperties", false),
+				prop("anyOf", []any{
+					paramSchema,
+					paramValueToSchema(v),
+				}),
 			)
 		}
 	}
 
-	return obj(
-		prop("type", "object"),
-		prop("properties", M{items: items}),
-		prop("additionalProperties", false),
-	)
+	return paramSchema
 }
 
 func buildStepErrorSchema() M {

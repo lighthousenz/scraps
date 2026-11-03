@@ -52,8 +52,12 @@ func (p *ParsedSource) RepoURL(baseURL string) string {
 }
 
 // ResolveRef resolves a ref (tag, branch, or commit) to a commit SHA using git ls-remote.
+// For annotated tags it returns the underlying commit, not the tag object.
 func ResolveRef(ctx context.Context, repoURL, ref string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", repoURL, ref)
+	// Query for both the short ref and its fully-qualified tag/branch forms,
+	// including the peeled ^{} line that annotated tags produce.
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", repoURL,
+		ref, "refs/tags/"+ref, "refs/tags/"+ref+"^{}", "refs/heads/"+ref)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -63,21 +67,56 @@ func ResolveRef(ctx context.Context, repoURL, ref string) (string, error) {
 
 	output := strings.TrimSpace(stdout.String())
 	if output == "" {
-		// ref might be a full commit SHA; try to use it directly
+		// ref might be a full commit SHA; try to use it directly.
 		if isHexSHA(ref) {
 			return ref, nil
 		}
 		return "", fmt.Errorf("ref %q not found in %s", ref, repoURL)
 	}
 
-	// Output format: "<sha>\t<refname>"
-	// There may be multiple lines; pick the first one.
+	type refLine struct {
+		sha     string
+		refname string
+	}
 	lines := strings.Split(output, "\n")
-	parts := strings.Fields(lines[0])
-	if len(parts) < 1 {
+	var refs []refLine
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			refs = append(refs, refLine{sha: parts[0], refname: parts[1]})
+		}
+	}
+	if len(refs) == 0 {
 		return "", fmt.Errorf("unexpected git ls-remote output: %s", output)
 	}
-	return parts[0], nil
+
+	// Prefer the dereferenced commit for annotated tags (refs/tags/<ref>^{}).
+	for _, r := range refs {
+		if r.refname == "refs/tags/"+ref+"^{}" {
+			return r.sha, nil
+		}
+	}
+	// Prefer exact ref matches in priority order.
+	for _, candidate := range []string{
+		"refs/tags/" + ref,
+		"refs/heads/" + ref,
+	} {
+		for _, r := range refs {
+			if r.refname == candidate {
+				return r.sha, nil
+			}
+		}
+	}
+	// If only one line matched, use it.
+	if len(refs) == 1 {
+		return refs[0].sha, nil
+	}
+	// Multiple matches with no exact hit — ambiguous.
+	names := make([]string, len(refs))
+	for i, r := range refs {
+		names[i] = r.refname
+	}
+	return "", fmt.Errorf("ref %q is ambiguous in %s, matches: %s", ref, repoURL, strings.Join(names, ", "))
 }
 
 func isHexSHA(s string) bool {
@@ -121,7 +160,18 @@ func FetchCommit(ctx context.Context, repoURL, commit, tmpDir string) (string, e
 }
 
 func runGit(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// Prepend config overrides to neutralize user/system git settings that
+	// affect working-tree content (autocrlf, eol, smudge/clean filters).
+	// This keeps HashDir's output a property of the commit, not the machine.
+	fullArgs := append([]string{
+		"-c", "core.autocrlf=false",
+		"-c", "core.eol=lf",
+		"-c", "core.symlinks=true",
+		"-c", "filter.lfs.smudge=",
+		"-c", "filter.lfs.process=",
+		"-c", "filter.lfs.clean=",
+	}, args...)
+	cmd := exec.CommandContext(ctx, "git", fullArgs...)
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -273,9 +323,9 @@ func CollectGitHubSources(actors map[string]string, checkers []string) []string 
 	return sources
 }
 
-// Resolve resolves and fetches all GitHub sources, updating the lock file.
-// It writes the lock file and populates the source cache.
-func Resolve(ctx context.Context, projectDir string, actors map[string]string, checkers []string, existing *LockFile) (*LockFile, error) {
+// Resolve resolves and fetches all GitHub sources, returning a new lock file.
+// It populates the source cache under projectDir/.scraps/sources/.
+func Resolve(ctx context.Context, projectDir string, actors map[string]string, checkers []string) (*LockFile, error) {
 	baseURL := GitHubBaseURL()
 	sources := CollectGitHubSources(actors, checkers)
 
@@ -312,7 +362,11 @@ func Resolve(ctx context.Context, projectDir string, actors map[string]string, c
 		subtreeDir := filepath.Join(checkoutDir, parsed.Path)
 		if _, err := os.Stat(subtreeDir); os.IsNotExist(err) {
 			_ = os.RemoveAll(tmpDir)
-			return nil, fmt.Errorf("path %q not found in %s at %s", parsed.Path, parsed.Owner+"/"+parsed.Repo, commit[:12])
+			commitPrefix := commit
+			if len(commitPrefix) > 12 {
+				commitPrefix = commitPrefix[:12]
+			}
+			return nil, fmt.Errorf("path %q not found in %s at %s", parsed.Path, parsed.Owner+"/"+parsed.Repo, commitPrefix)
 		}
 
 		hash, err := HashDir(subtreeDir)
@@ -356,7 +410,7 @@ func Frozen(ctx context.Context, projectDir string, actors map[string]string, ch
 	for _, source := range sources {
 		entry, ok := lf.Sources[source]
 		if !ok {
-			return fmt.Errorf("source %q not found in lock file", source)
+			return &MismatchError{Message: fmt.Sprintf("source %q not found in lock file", source)}
 		}
 
 		hash := entry.Hash
@@ -387,7 +441,11 @@ func Frozen(ctx context.Context, projectDir string, actors map[string]string, ch
 			subtreeDir := filepath.Join(checkoutDir, parsed.Path)
 			if _, err := os.Stat(subtreeDir); os.IsNotExist(err) {
 				_ = os.RemoveAll(tmpDir)
-				return fmt.Errorf("path %q not found in %s at %s", parsed.Path, parsed.Owner+"/"+parsed.Repo, entry.Commit[:12])
+				commitPrefix := entry.Commit
+				if len(commitPrefix) > 12 {
+					commitPrefix = commitPrefix[:12]
+				}
+				return &MismatchError{Message: fmt.Sprintf("path %q not found in %s at %s", parsed.Path, parsed.Owner+"/"+parsed.Repo, commitPrefix)}
 			}
 
 			actualHash, err := HashDir(subtreeDir)
@@ -398,7 +456,7 @@ func Frozen(ctx context.Context, projectDir string, actors map[string]string, ch
 
 			if actualHash != hash {
 				_ = os.RemoveAll(tmpDir)
-				return fmt.Errorf("hash mismatch for %q: expected sha256:%s, got sha256:%s", source, hash, actualHash)
+				return &MismatchError{Message: fmt.Sprintf("hash mismatch for %q: expected sha256:%s, got sha256:%s", source, hash, actualHash)}
 			}
 
 			// Copy to cache.
@@ -419,7 +477,7 @@ func Frozen(ctx context.Context, projectDir string, actors map[string]string, ch
 				return fmt.Errorf("hashing cached %q: %w", source, err)
 			}
 			if actualHash != hash {
-				return fmt.Errorf("hash mismatch for %q: expected sha256:%s, got sha256:%s", source, hash, actualHash)
+				return &MismatchError{Message: fmt.Sprintf("hash mismatch for %q: expected sha256:%s, got sha256:%s", source, hash, actualHash)}
 			}
 		} else {
 			return fmt.Errorf("checking cache for %q: %w", source, err)

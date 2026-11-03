@@ -29,6 +29,15 @@ func cmdSchema(args []string) int {
 		return 2
 	}
 
+	// Report load problems that affect schema completeness (missing actors, checkers).
+	if len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintln(os.Stderr, p)
+		}
+		fmt.Fprintln(os.Stderr, "scraps schema: refusing to generate a partial schema; fix the problems above")
+		return 2
+	}
+
 	data, err := schema.Generate(lp)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "scraps schema: %s\n", err)

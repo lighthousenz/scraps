@@ -117,6 +117,35 @@ func TestResolveRefTag(t *testing.T) {
 	}
 }
 
+func TestResolveRefAnnotatedTag(t *testing.T) {
+	baseDir := t.TempDir()
+
+	workDir := t.TempDir()
+	run(t, workDir, "git", "init", "-b", "main")
+	run(t, workDir, "git", "config", "user.email", "test@test.com")
+	run(t, workDir, "git", "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(workDir, "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, workDir, "git", "add", "-A")
+	run(t, workDir, "git", "commit", "-m", "initial")
+	// Create an annotated tag — ls-remote returns both the tag object and the ^{} commit.
+	run(t, workDir, "git", "tag", "-a", "v2.0.0", "-m", "release v2.0.0")
+	wantSHA := runOutput(t, workDir, "git", "rev-parse", "HEAD")
+
+	bareDir := filepath.Join(baseDir, "bare.git")
+	run(t, "", "git", "clone", "--bare", workDir, bareDir)
+
+	ctx := context.Background()
+	got, err := ResolveRef(ctx, bareDir, "v2.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != wantSHA {
+		t.Errorf("ResolveRef(annotated tag) = %q, want commit %q", got, wantSHA)
+	}
+}
+
 func TestResolveRefBranch(t *testing.T) {
 	workDir := t.TempDir()
 	run(t, workDir, "git", "init", "-b", "main")
@@ -251,7 +280,7 @@ func TestCacheLayout(t *testing.T) {
 		"myactor": "github:test/repo/actors/myactor@v1.0.0",
 	}
 
-	lf, err := Resolve(ctx, projectDir, actors, nil, nil)
+	lf, err := Resolve(ctx, projectDir, actors, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +315,7 @@ func TestCacheLayout(t *testing.T) {
 	}
 
 	// Verify hash stability — resolve again, should get same hash.
-	lf2, err := Resolve(ctx, projectDir, actors, nil, nil)
+	lf2, err := Resolve(ctx, projectDir, actors, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +337,7 @@ func TestPruning(t *testing.T) {
 		"a": "github:test/repo/actors/a@v1.0.0",
 	}
 
-	lf, err := Resolve(ctx, projectDir, actors, nil, nil)
+	lf, err := Resolve(ctx, projectDir, actors, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +352,7 @@ func TestPruning(t *testing.T) {
 
 	// Resolve with no sources — should produce an empty lock.
 	emptyActors := map[string]string{}
-	lf2, err := Resolve(ctx, projectDir, emptyActors, nil, lf)
+	lf2, err := Resolve(ctx, projectDir, emptyActors, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +426,7 @@ func TestFrozenRestoresMissingCache(t *testing.T) {
 	actors := map[string]string{
 		"a": "github:test/repo/actors/a@v1.0.0",
 	}
-	lf, err := Resolve(ctx, projectDir, actors, nil, nil)
+	lf, err := Resolve(ctx, projectDir, actors, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

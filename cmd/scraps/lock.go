@@ -58,7 +58,11 @@ func cmdLock(args []string) int {
 
 		if err := lock.Frozen(ctx, projectDir, lp.Project.Actors, lp.Project.Checkers, lf); err != nil {
 			fmt.Fprintf(os.Stderr, "scraps lock --frozen: %s\n", err)
-			return 2
+			var me *lock.MismatchError
+			if errors.As(err, &me) {
+				return 2
+			}
+			return 3
 		}
 
 		fmt.Println("ok: lock verified")
@@ -66,7 +70,7 @@ func cmdLock(args []string) int {
 	}
 
 	// Normal mode: resolve and write.
-	lf, err := lock.Resolve(ctx, projectDir, lp.Project.Actors, lp.Project.Checkers, lp.LockFile)
+	lf, err := lock.Resolve(ctx, projectDir, lp.Project.Actors, lp.Project.Checkers)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "scraps lock: %s\n", err)
 		return 3
