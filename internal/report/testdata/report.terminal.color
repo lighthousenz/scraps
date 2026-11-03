@@ -1,0 +1,13 @@
+scraps 1.4.0 · docengine 2.31.0 · seed 81723
+
+  DOC-0017   Table cell merge loses borders             [32mas-expected[0m correct              0.8s
+  DOC-0042   Concurrent inserts drop a paragraph        [32mas-expected[0m drops-one            1.9s
+  DOC-0051   Tracked change survives reject-all         [31mREGRESSED[0m correct → keeps-insertion 1.2s
+  DOC-0060   Fixed bug                                  fixed          drops-one → correct  0.5s
+  DOC-0070   Changed failure mode                       changed        drops-one → duplicates 0.6s
+  DOC-0080   Overlapping outcomes                       unrecognised   correct →            0.7s
+  DOC-0090   Actor crashed                              [31mBROKEN[0m 0.3s
+
+  7 scenarios · 2 as-expected · 1 fixed · 1 regressed · 1 changed · 1 unrecognised · 1 broken
+  artefacts: .scraps/runs/2026-11-02T09-14-03Z/
+  exit 1 (regressed is in --fail-on, broken is in --fail-on)
