@@ -1,12 +1,14 @@
 package actor_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/lighthousenz/scraps/internal/actor"
 )
@@ -28,8 +30,10 @@ func TestPrepareCacheHit(t *testing.T) {
 		Subjects:         nil,
 	}
 
+	ctx := context.Background()
+
 	// First call: cache miss, copies source.
-	res1, err := actor.Prepare(cfg)
+	res1, err := actor.Prepare(ctx, cfg)
 	if err != nil {
 		t.Fatalf("first prepare: %v", err)
 	}
@@ -52,7 +56,7 @@ func TestPrepareCacheHit(t *testing.T) {
 	}
 
 	// Second call: cache hit, returns same directory.
-	res2, err := actor.Prepare(cfg)
+	res2, err := actor.Prepare(ctx, cfg)
 	if err != nil {
 		t.Fatalf("second prepare: %v", err)
 	}
@@ -74,8 +78,10 @@ func TestPrepareHalfPreparedRetry(t *testing.T) {
 		CacheDir:  cacheDir,
 	}
 
+	ctx := context.Background()
+
 	// First call to establish the directory.
-	res1, err := actor.Prepare(cfg)
+	res1, err := actor.Prepare(ctx, cfg)
 	if err != nil {
 		t.Fatalf("first prepare: %v", err)
 	}
@@ -86,7 +92,7 @@ func TestPrepareHalfPreparedRetry(t *testing.T) {
 	}
 
 	// Prepare again should delete and re-copy.
-	res2, err := actor.Prepare(cfg)
+	res2, err := actor.Prepare(ctx, cfg)
 	if err != nil {
 		t.Fatalf("second prepare: %v", err)
 	}
@@ -127,6 +133,8 @@ func TestPrepareConcurrent(t *testing.T) {
 		Subjects:         nil,
 	}
 
+	ctx := context.Background()
+
 	// Run 10 concurrent prepares.
 	var wg sync.WaitGroup
 	var dirs []string
@@ -138,7 +146,7 @@ func TestPrepareConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			prepareCount.Add(1)
-			res, err := actor.Prepare(cfg)
+			res, err := actor.Prepare(ctx, cfg)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -192,7 +200,8 @@ func TestPrepareWithResolver(t *testing.T) {
 		},
 	}
 
-	res, err := actor.Prepare(cfg)
+	ctx := context.Background()
+	res, err := actor.Prepare(ctx, cfg)
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -221,7 +230,8 @@ func TestPrepareFailure(t *testing.T) {
 		PrepareRun: "exit 1",
 	}
 
-	_, err := actor.Prepare(cfg)
+	ctx := context.Background()
+	_, err := actor.Prepare(ctx, cfg)
 	if err == nil {
 		t.Fatal("expected error from failing prepare command")
 	}
@@ -260,12 +270,14 @@ func TestPrepareDifferentSubjectVersions(t *testing.T) {
 		Subjects:         map[string]string{"yjs": "2.0.0"},
 	}
 
-	res1, err := actor.Prepare(cfg1)
+	ctx := context.Background()
+
+	res1, err := actor.Prepare(ctx, cfg1)
 	if err != nil {
 		t.Fatalf("prepare v1: %v", err)
 	}
 
-	res2, err := actor.Prepare(cfg2)
+	res2, err := actor.Prepare(ctx, cfg2)
 	if err != nil {
 		t.Fatalf("prepare v2: %v", err)
 	}
@@ -296,12 +308,14 @@ func TestPrepareDifferentTools(t *testing.T) {
 		Tools:     map[string]string{"node": "23.0.0"},
 	}
 
-	res1, err := actor.Prepare(cfg1)
+	ctx := context.Background()
+
+	res1, err := actor.Prepare(ctx, cfg1)
 	if err != nil {
 		t.Fatalf("prepare with node 22: %v", err)
 	}
 
-	res2, err := actor.Prepare(cfg2)
+	res2, err := actor.Prepare(ctx, cfg2)
 	if err != nil {
 		t.Fatalf("prepare with node 23: %v", err)
 	}
@@ -328,7 +342,8 @@ func TestPrepareNoPrepareCommand(t *testing.T) {
 		PrepareRun: "",
 	}
 
-	res, err := actor.Prepare(cfg)
+	ctx := context.Background()
+	res, err := actor.Prepare(ctx, cfg)
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -344,5 +359,113 @@ func TestPrepareNoPrepareCommand(t *testing.T) {
 	// Should have the marker.
 	if _, err := os.Stat(filepath.Join(res.Dir, ".scraps-prepared")); err != nil {
 		t.Error("prepared marker not found")
+	}
+}
+
+func TestPrepareSymlinksCopied(t *testing.T) {
+	srcDir := t.TempDir()
+
+	// Create a regular file and a symlink to it.
+	if err := os.WriteFile(filepath.Join(srcDir, "target.js"), []byte("module.exports = {}"), 0o644); err != nil {
+		t.Fatalf("write target.js: %v", err)
+	}
+	if err := os.Symlink("target.js", filepath.Join(srcDir, "link.js")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	cfg := &actor.PrepareConfig{
+		SourceDir: srcDir,
+		CacheDir:  cacheDir,
+	}
+
+	ctx := context.Background()
+	res, err := actor.Prepare(ctx, cfg)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	// The symlink should exist in the prepared dir.
+	linkPath := filepath.Join(res.Dir, "link.js")
+	fi, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatalf("lstat link.js in prepared dir: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("expected link.js to be a symlink in the prepared dir")
+	}
+
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("readlink: %v", err)
+	}
+	if target != "target.js" {
+		t.Errorf("expected symlink target 'target.js', got %q", target)
+	}
+}
+
+func TestPrepareSymlinkChangesInvalidateCache(t *testing.T) {
+	srcDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(srcDir, "a.js"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write a.js: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "b.js"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("write b.js: %v", err)
+	}
+	if err := os.Symlink("a.js", filepath.Join(srcDir, "link.js")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	cfg := &actor.PrepareConfig{
+		SourceDir: srcDir,
+		CacheDir:  cacheDir,
+	}
+
+	ctx := context.Background()
+
+	res1, err := actor.Prepare(ctx, cfg)
+	if err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+
+	// Re-point the symlink.
+	if err := os.Remove(filepath.Join(srcDir, "link.js")); err != nil {
+		t.Fatalf("remove symlink: %v", err)
+	}
+	if err := os.Symlink("b.js", filepath.Join(srcDir, "link.js")); err != nil {
+		t.Fatalf("create new symlink: %v", err)
+	}
+
+	res2, err := actor.Prepare(ctx, cfg)
+	if err != nil {
+		t.Fatalf("second prepare: %v", err)
+	}
+
+	if res1.Dir == res2.Dir {
+		t.Error("expected different cache dirs when symlink target changes")
+	}
+}
+
+func TestPrepareCancelledContext(t *testing.T) {
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "main.js"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write main.js: %v", err)
+	}
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	cfg := &actor.PrepareConfig{
+		SourceDir:  srcDir,
+		CacheDir:   cacheDir,
+		PrepareRun: "sleep 60",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := actor.Prepare(ctx, cfg)
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
 	}
 }

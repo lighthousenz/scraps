@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -54,6 +55,8 @@ func NewClient(stdin io.Writer, stdout io.Reader, onLog LogHandler) *Client {
 // It blocks until stdout is closed or an error occurs.
 // It must be called exactly once, from a separate goroutine.
 func (c *Client) Run() {
+	defer close(c.closed)
+
 	c.started.Store(true)
 	scanner := bufio.NewScanner(c.stdout)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
@@ -72,11 +75,20 @@ func (c *Client) Run() {
 
 		// A notification has no id.
 		if resp.ID == nil {
+			if resp.JSONRPC != "2.0" || resp.Method == "" {
+				c.breakWith("non-protocol JSON on stdout: missing jsonrpc or method")
+				return
+			}
 			if resp.Method == "scraps/log" {
 				var note LogNotification
-				if err := json.Unmarshal(resp.Params, &note); err == nil {
-					c.onLog(note.Level, note.Message)
+				if err := json.Unmarshal(resp.Params, &note); err != nil {
+					c.breakWith(fmt.Sprintf("invalid scraps/log params: %s", err))
+					return
 				}
+				c.onLog(note.Level, note.Message)
+			} else {
+				c.breakWith(fmt.Sprintf("unknown notification method: %s", resp.Method))
+				return
 			}
 			continue
 		}
@@ -92,28 +104,28 @@ func (c *Client) Run() {
 		c.mu.Unlock()
 
 		if resp.Error != nil {
-			ch <- result{err: mapError(resp.Error)}
+			mapped := mapError(resp.Error)
+			var be *BrokenError
+			if errors.As(mapped, &be) {
+				c.breakWith(be.Reason)
+			}
+			ch <- result{err: mapped}
 		} else {
 			ch <- result{data: resp.Result}
 		}
 	}
 
-	// stdout closed — fail all pending calls.
+	// stdout closed — latch broken and fail all pending calls.
 	c.mu.Lock()
-	if c.broken == nil && len(c.pending) > 0 {
-		c.broken = &BrokenError{Reason: "stdout closed while calls are pending"}
+	if c.broken == nil {
+		c.broken = &BrokenError{Reason: "stdout closed"}
 	}
 	for id, ch := range c.pending {
-		if c.broken != nil {
-			ch <- result{err: c.broken}
-		} else {
-			ch <- result{err: &BrokenError{Reason: "stdout closed"}}
-		}
+		ch <- result{err: c.broken}
 		delete(c.pending, id)
 	}
 	c.closeErr = scanner.Err()
 	c.mu.Unlock()
-	close(c.closed)
 }
 
 // Call sends a JSON-RPC request and waits for the response.
@@ -123,6 +135,18 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		err := c.broken
 		c.mu.Unlock()
 		return nil, err
+	}
+
+	select {
+	case <-c.closed:
+		// Reader has exited; latch broken if not already set.
+		if c.broken == nil {
+			c.broken = &BrokenError{Reason: "stdout closed"}
+		}
+		err := c.broken
+		c.mu.Unlock()
+		return nil, err
+	default:
 	}
 
 	c.nextID++
@@ -178,11 +202,39 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		return nil, c.broken
 	case r := <-ch:
 		return r.data, r.err
+	case <-c.closed:
+		c.mu.Lock()
+		// Check if result arrived before closed.
+		select {
+		case r := <-ch:
+			c.mu.Unlock()
+			return r.data, r.err
+		default:
+		}
+		delete(c.pending, id)
+		if c.broken == nil {
+			c.broken = &BrokenError{Reason: "stdout closed"}
+		}
+		err := c.broken
+		c.mu.Unlock()
+		return nil, err
 	}
 }
 
 // Initialize sends scraps/initialize and validates the protocol version.
 func (c *Client) Initialize(ctx context.Context, params *InitializeParams) (*InitializeResult, error) {
+	if params.Protocol != ProtocolVersion {
+		return nil, fmt.Errorf("unsupported protocol version %d (this client supports %d)", params.Protocol, ProtocolVersion)
+	}
+
+	// Normalize nil maps to empty maps so actors receive {} not null.
+	if params.Inputs == nil {
+		params.Inputs = make(map[string]any)
+	}
+	if params.Subjects == nil {
+		params.Subjects = make(map[string]string)
+	}
+
 	raw, err := c.Call(ctx, "scraps/initialize", params)
 	if err != nil {
 		return nil, fmt.Errorf("scraps/initialize: %w", err)
@@ -240,7 +292,7 @@ func mapError(e *responseError) error {
 			Data:    e.Data,
 		}
 	default:
-		// 1001, -32601, -32602, and any other code → broken.
+		// 1001, -32601, -32602, and any other code -> broken.
 		return &BrokenError{Reason: fmt.Sprintf("error code %d: %s", e.Code, e.Message)}
 	}
 }

@@ -170,13 +170,19 @@ func TestResponsesOutOfOrder(t *testing.T) {
 		result2, err2 = c.Call(ctx, "method/second", nil)
 	}()
 
-	// Read both requests.
-	id1, _, _ := fa.readRequest(t)
-	id2, _, _ := fa.readRequest(t)
+	// Read both requests and match by method to handle scheduling order.
+	reqA_id, reqA_method, _ := fa.readRequest(t)
+	reqB_id, reqB_method, _ := fa.readRequest(t)
 
-	// Respond in reverse order.
-	fa.sendResponse(t, id2, map[string]string{"from": "second"})
-	fa.sendResponse(t, id1, map[string]string{"from": "first"})
+	// Build a map from method to id.
+	ids := map[string]int64{reqA_method: reqA_id, reqB_method: reqB_id}
+
+	firstID := ids["method/first"]
+	secondID := ids["method/second"]
+
+	// Respond in reverse order (second before first).
+	fa.sendResponse(t, secondID, map[string]string{"from": "second"})
+	fa.sendResponse(t, firstID, map[string]string{"from": "first"})
 
 	wg.Wait()
 
@@ -314,6 +320,41 @@ func TestErrorCode1001_Broken(t *testing.T) {
 	}
 }
 
+func TestErrorCode1001_LatchesBroken(t *testing.T) {
+	fa := newFakeActor()
+	defer fa.close()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// First call: get a 1001 error.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = c.Call(ctx, "test/first", nil)
+	}()
+
+	id, _, _ := fa.readRequest(t)
+	fa.sendError(t, id, 1001, "actor fault", nil)
+	wg.Wait()
+
+	// Client should be broken.
+	if c.IsBroken() == nil {
+		t.Fatal("client should be broken after error code 1001")
+	}
+
+	// Subsequent call should fail immediately with BrokenError.
+	_, err := c.Call(ctx, "test/second", nil)
+	var brokenErr *protocol.BrokenError
+	if !errors.As(err, &brokenErr) {
+		t.Fatalf("expected BrokenError on subsequent call after 1001, got %T: %v", err, err)
+	}
+}
+
 func TestErrorCodeMethodNotFound_Broken(t *testing.T) {
 	fa := newFakeActor()
 	defer fa.close()
@@ -339,6 +380,11 @@ func TestErrorCodeMethodNotFound_Broken(t *testing.T) {
 	var brokenErr *protocol.BrokenError
 	if !errors.As(callErr, &brokenErr) {
 		t.Fatalf("expected BrokenError, got %T: %v", callErr, callErr)
+	}
+
+	// Should also latch broken state.
+	if c.IsBroken() == nil {
+		t.Error("client should be broken after -32601")
 	}
 }
 
@@ -367,6 +413,10 @@ func TestErrorCodeInvalidParams_Broken(t *testing.T) {
 	var brokenErr *protocol.BrokenError
 	if !errors.As(callErr, &brokenErr) {
 		t.Fatalf("expected BrokenError, got %T: %v", callErr, callErr)
+	}
+
+	if c.IsBroken() == nil {
+		t.Error("client should be broken after -32602")
 	}
 }
 
@@ -401,6 +451,111 @@ func TestProtocolViolation_InvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(brokenErr.Reason, "invalid JSON") {
 		t.Errorf("expected 'invalid JSON' in reason, got %q", brokenErr.Reason)
+	}
+}
+
+func TestProtocolViolation_NonProtocolJSON(t *testing.T) {
+	fa := newFakeActor()
+	defer fa.close()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var callErr error
+	go func() {
+		defer wg.Done()
+		_, callErr = c.Call(ctx, "test/op", nil)
+	}()
+
+	fa.readRequest(t)
+	// A JSON logger line that is valid JSON but not a JSON-RPC message.
+	if _, err := fmt.Fprintln(fa.respW, `{"level":30,"msg":"hello"}`); err != nil {
+		t.Fatalf("write non-protocol JSON: %v", err)
+	}
+
+	wg.Wait()
+
+	var brokenErr *protocol.BrokenError
+	if !errors.As(callErr, &brokenErr) {
+		t.Fatalf("expected BrokenError, got %T: %v", callErr, callErr)
+	}
+	if !strings.Contains(brokenErr.Reason, "non-protocol JSON") {
+		t.Errorf("expected 'non-protocol JSON' in reason, got %q", brokenErr.Reason)
+	}
+}
+
+func TestProtocolViolation_UnknownNotificationMethod(t *testing.T) {
+	fa := newFakeActor()
+	defer fa.close()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var callErr error
+	go func() {
+		defer wg.Done()
+		_, callErr = c.Call(ctx, "test/op", nil)
+	}()
+
+	fa.readRequest(t)
+	// A valid JSON-RPC notification with an unknown method.
+	if _, err := fmt.Fprintln(fa.respW, `{"jsonrpc":"2.0","method":"unknown/method","params":{}}`); err != nil {
+		t.Fatalf("write unknown notification: %v", err)
+	}
+
+	wg.Wait()
+
+	var brokenErr *protocol.BrokenError
+	if !errors.As(callErr, &brokenErr) {
+		t.Fatalf("expected BrokenError, got %T: %v", callErr, callErr)
+	}
+	if !strings.Contains(brokenErr.Reason, "unknown notification") {
+		t.Errorf("expected 'unknown notification' in reason, got %q", brokenErr.Reason)
+	}
+}
+
+func TestProtocolViolation_BadLogParams(t *testing.T) {
+	fa := newFakeActor()
+	defer fa.close()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var callErr error
+	go func() {
+		defer wg.Done()
+		_, callErr = c.Call(ctx, "test/op", nil)
+	}()
+
+	fa.readRequest(t)
+	// scraps/log with invalid params.
+	if _, err := fmt.Fprintln(fa.respW, `{"jsonrpc":"2.0","method":"scraps/log","params":"not-an-object"}`); err != nil {
+		t.Fatalf("write bad log params: %v", err)
+	}
+
+	wg.Wait()
+
+	var brokenErr *protocol.BrokenError
+	if !errors.As(callErr, &brokenErr) {
+		t.Fatalf("expected BrokenError, got %T: %v", callErr, callErr)
+	}
+	if !strings.Contains(brokenErr.Reason, "invalid scraps/log params") {
+		t.Errorf("expected 'invalid scraps/log params' in reason, got %q", brokenErr.Reason)
 	}
 }
 
@@ -467,6 +622,32 @@ func TestProtocolViolation_StdoutClosedWithPending(t *testing.T) {
 	if !strings.Contains(brokenErr.Reason, "stdout closed") {
 		t.Errorf("expected 'stdout closed' in reason, got %q", brokenErr.Reason)
 	}
+	_ = fa.reqR.Close()
+	_ = fa.reqW.Close()
+}
+
+func TestCallAfterStdoutClose(t *testing.T) {
+	fa := newFakeActor()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	// Close stdout immediately.
+	_ = fa.respW.Close()
+
+	// Wait for Run to finish.
+	<-c.Done()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Call after stdout is closed should fail immediately with BrokenError.
+	_, err := c.Call(ctx, "test/op", nil)
+	var brokenErr *protocol.BrokenError
+	if !errors.As(err, &brokenErr) {
+		t.Fatalf("expected BrokenError, got %T: %v", err, err)
+	}
+
 	_ = fa.reqR.Close()
 	_ = fa.reqW.Close()
 }
@@ -653,5 +834,76 @@ func TestInitializeSuccess(t *testing.T) {
 	clientID, ok := initResult.Outputs["client-id"]
 	if !ok || clientID != "alice-1" {
 		t.Errorf("expected client-id=alice-1, got %v", initResult.Outputs)
+	}
+}
+
+func TestInitializeNilMapsNormalized(t *testing.T) {
+	fa := newFakeActor()
+	defer fa.close()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, _ = c.Initialize(ctx, &protocol.InitializeParams{
+			Protocol: 1,
+			Name:     "test",
+			Kind:     "test",
+			// Inputs and Subjects intentionally nil.
+		})
+	}()
+
+	_, _, params := fa.readRequest(t)
+
+	// Verify that inputs and subjects are {} not null in the JSON.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(params, &raw); err != nil {
+		t.Fatalf("unmarshal raw params: %v", err)
+	}
+	if string(raw["inputs"]) == "null" {
+		t.Error("inputs should be {} not null")
+	}
+	if string(raw["subjects"]) == "null" {
+		t.Error("subjects should be {} not null")
+	}
+	if string(raw["inputs"]) != "{}" {
+		t.Errorf("expected inputs={}, got %s", string(raw["inputs"]))
+	}
+	if string(raw["subjects"]) != "{}" {
+		t.Errorf("expected subjects={}, got %s", string(raw["subjects"]))
+	}
+
+	// Respond so the goroutine can finish.
+	fa.sendResponse(t, 1, protocol.InitializeResult{Protocol: 1})
+	wg.Wait()
+}
+
+func TestInitializeRejectsWrongProtocol(t *testing.T) {
+	fa := newFakeActor()
+	defer fa.close()
+
+	c := protocol.NewClient(fa.reqW, fa.respR, nil)
+	go c.Run()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := c.Initialize(ctx, &protocol.InitializeParams{
+		Protocol: 99,
+		Name:     "test",
+		Kind:     "test",
+	})
+
+	if err == nil {
+		t.Fatal("expected error for unsupported protocol version")
+	}
+	if !strings.Contains(err.Error(), "unsupported protocol version") {
+		t.Errorf("expected 'unsupported protocol version' in error, got: %v", err)
 	}
 }

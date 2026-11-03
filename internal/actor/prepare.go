@@ -13,11 +13,14 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
 	preparedMarker = ".scraps-prepared"
 	maxOutputLines = 50
+	// lockPollInterval is the interval for polling the lock in non-blocking mode.
+	lockPollInterval = 100 * time.Millisecond
 )
 
 // SubjectResolver resolves expressions like ${{ subjects.X }} in a prepare.run command.
@@ -49,8 +52,9 @@ type PrepareResult struct {
 }
 
 // Prepare ensures the actor's prepared directory exists and is ready.
-// It uses file locking for concurrency safety.
-func Prepare(cfg *PrepareConfig) (*PrepareResult, error) {
+// It uses file locking for concurrency safety. The context controls
+// cancellation of the lock acquisition and the prepare command.
+func Prepare(ctx context.Context, cfg *PrepareConfig) (*PrepareResult, error) {
 	key, err := computeCacheKey(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("compute cache key: %w", err)
@@ -63,14 +67,14 @@ func Prepare(cfg *PrepareConfig) (*PrepareResult, error) {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
 
-	// Acquire exclusive file lock.
+	// Acquire exclusive file lock with context-aware polling.
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 	defer func() { _ = lockFile.Close() }()
 
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX); err != nil {
+	if err := flockWithContext(ctx, lockFile, syscall.LOCK_EX); err != nil {
 		return nil, fmt.Errorf("acquire lock: %w", err)
 	}
 	defer func() { _ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN) }()
@@ -104,7 +108,7 @@ func Prepare(cfg *PrepareConfig) (*PrepareResult, error) {
 			}
 		}
 
-		if err := runPrepareCommand(cfg.Tools, prepareCmd, preparedDir); err != nil {
+		if err := runPrepareCommand(ctx, cfg.Tools, prepareCmd, preparedDir); err != nil {
 			_ = os.RemoveAll(preparedDir)
 			return nil, err
 		}
@@ -117,6 +121,26 @@ func Prepare(cfg *PrepareConfig) (*PrepareResult, error) {
 	}
 
 	return &PrepareResult{Dir: preparedDir}, nil
+}
+
+// flockWithContext acquires a file lock using non-blocking polling, respecting
+// context cancellation and deadlines.
+func flockWithContext(ctx context.Context, f *os.File, how int) error {
+	for {
+		err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
+		if err == nil {
+			return nil
+		}
+		if err != syscall.EWOULDBLOCK {
+			return err
+		}
+		// Lock is held by another process; poll with context awareness.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(lockPollInterval):
+		}
+	}
 }
 
 func computeCacheKey(cfg *PrepareConfig) (string, error) {
@@ -176,15 +200,27 @@ func hashDir(dir string) ([]byte, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
 		}
 		// Use forward slashes for stability.
 		rel = filepath.ToSlash(rel)
+
+		if d.Type()&fs.ModeSymlink != 0 {
+			// Hash symlinks by their target.
+			target, err := os.Readlink(path)
+			if err != nil {
+				return fmt.Errorf("readlink %s: %w", rel, err)
+			}
+			_, _ = fmt.Fprintf(h, "symlink:%s\x00%s\x00", rel, target)
+			files = append(files, fileEntry{relPath: rel, absPath: path})
+			return nil
+		}
+
+		if !d.Type().IsRegular() {
+			return fmt.Errorf("unsupported file type %s for %s", d.Type(), rel)
+		}
 		files = append(files, fileEntry{relPath: rel, absPath: path})
 		return nil
 	})
@@ -198,9 +234,14 @@ func hashDir(dir string) ([]byte, error) {
 	})
 
 	for _, f := range files {
-		info, err := os.Stat(f.absPath)
+		info, err := os.Lstat(f.absPath)
 		if err != nil {
 			return nil, err
+		}
+
+		if info.Mode()&fs.ModeSymlink != 0 {
+			// Already hashed above via symlink prefix.
+			continue
 		}
 
 		mode := "644"
@@ -234,8 +275,15 @@ func copyDir(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return fmt.Errorf("readlink %s: %w", rel, err)
+			}
+			return os.Symlink(linkTarget, target)
+		}
 		if !d.Type().IsRegular() {
-			return nil
+			return fmt.Errorf("unsupported file type %s for %s", d.Type(), rel)
 		}
 		return copyFile(path, target)
 	})
@@ -286,13 +334,13 @@ func resolveExpressions(cmd string, resolver SubjectResolver) (string, error) {
 	return result, nil
 }
 
-func runPrepareCommand(tools map[string]string, cmd string, dir string) error {
+func runPrepareCommand(ctx context.Context, tools map[string]string, cmd string, dir string) error {
 	name, args, err := BuildCommand(tools, cmd)
 	if err != nil {
 		return fmt.Errorf("build prepare command: %w", err)
 	}
 
-	execCmd := exec.CommandContext(context.Background(), name, args...)
+	execCmd := exec.CommandContext(ctx, name, args...)
 	execCmd.Dir = dir
 	execCmd.Env = os.Environ()
 

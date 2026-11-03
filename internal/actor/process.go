@@ -25,11 +25,16 @@ type Process struct {
 	done      chan struct{}
 	exited    chan struct{}
 	stdinPipe io.WriteCloser
+
+	// exitErr holds the error from cmd.Wait, if any.
+	exitErr error
+	// stderrDone is closed when captureStderr finishes reading.
+	stderrDone chan struct{}
 }
 
 // StartConfig holds the configuration for starting an actor process.
 type StartConfig struct {
-	// Tools from the actor definition (name → version).
+	// Tools from the actor definition (name -> version).
 	Tools map[string]string
 	// Run is the shell command to execute.
 	Run string
@@ -68,6 +73,16 @@ func Start(ctx context.Context, cfg *StartConfig) (*Process, error) {
 	)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	// On context cancellation, send SIGTERM to the process group (not SIGKILL
+	// to the leader), then allow WaitDelay for graceful exit.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+	cmd.WaitDelay = 5 * time.Second
+
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
@@ -98,11 +113,12 @@ func Start(ctx context.Context, cfg *StartConfig) (*Process, error) {
 	}
 
 	p := &Process{
-		cmd:       cmd,
-		logFile:   logFile,
-		done:      make(chan struct{}),
-		exited:    make(chan struct{}),
-		stdinPipe: stdinPipe,
+		cmd:        cmd,
+		logFile:    logFile,
+		done:       make(chan struct{}),
+		exited:     make(chan struct{}),
+		stdinPipe:  stdinPipe,
+		stderrDone: make(chan struct{}),
 	}
 
 	// Wrap the log handler to also write to the log file.
@@ -118,16 +134,21 @@ func Start(ctx context.Context, cfg *StartConfig) (*Process, error) {
 	p.client = protocol.NewClient(stdinPipe, stdoutPipe, logHandler)
 
 	// Capture stderr.
-	go p.captureStderr(stderrPipe)
+	go func() {
+		p.captureStderr(stderrPipe)
+		close(p.stderrDone)
+	}()
 
 	// Start the protocol reader.
 	go func() {
 		p.client.Run()
 	}()
 
-	// Wait for process exit in background.
+	// Wait for readers to finish before reaping the process.
 	go func() {
-		_ = cmd.Wait()
+		<-p.client.Done()
+		<-p.stderrDone
+		p.exitErr = cmd.Wait()
 		close(p.exited)
 	}()
 
@@ -158,12 +179,12 @@ func (p *Process) Stop(ctx context.Context, shutdownTimeout, termTimeout time.Du
 	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, shutdownTimeout)
 	defer shutdownCancel()
 
-	_ = p.client.Shutdown(shutdownCtx)
+	shutdownErr := p.client.Shutdown(shutdownCtx)
 
 	select {
 	case <-p.exited:
 		p.cleanup()
-		return nil
+		return p.exitResult(shutdownErr)
 	case <-shutdownCtx.Done():
 	}
 
@@ -173,7 +194,7 @@ func (p *Process) Stop(ctx context.Context, shutdownTimeout, termTimeout time.Du
 	select {
 	case <-p.exited:
 		p.cleanup()
-		return nil
+		return fmt.Errorf("actor required SIGTERM to stop: %w", p.exitResult(shutdownErr))
 	case <-time.After(termTimeout):
 	}
 
@@ -182,7 +203,24 @@ func (p *Process) Stop(ctx context.Context, shutdownTimeout, termTimeout time.Du
 
 	<-p.exited
 	p.cleanup()
-	return nil
+	return fmt.Errorf("actor required SIGKILL to stop: %w", p.exitResult(shutdownErr))
+}
+
+// exitResult combines shutdown and exit errors into a single error.
+func (p *Process) exitResult(shutdownErr error) error {
+	if p.exitErr != nil {
+		if shutdownErr != nil {
+			return fmt.Errorf("exit: %w; shutdown: %w", p.exitErr, shutdownErr)
+		}
+		return fmt.Errorf("exit: %w", p.exitErr)
+	}
+	return shutdownErr
+}
+
+// ExitErr returns the error from the process exit, if any.
+func (p *Process) ExitErr() error {
+	<-p.exited
+	return p.exitErr
 }
 
 // Kill sends SIGTERM followed by SIGKILL after termTimeout to the process group.
@@ -222,7 +260,11 @@ func (p *Process) signalGroup(sig syscall.Signal) {
 
 func (p *Process) cleanup() {
 	_ = p.stdinPipe.Close()
+	// Wait for stderr capture to finish before closing the log file.
+	<-p.stderrDone
+	p.logMu.Lock()
 	_ = p.logFile.Close()
+	p.logMu.Unlock()
 }
 
 // CallWithTimeout sends a JSON-RPC call with a deadline.

@@ -374,10 +374,7 @@ func TestProcessStderrCapture(t *testing.T) {
 		t.Fatalf("initialize: %v", err)
 	}
 
-	// Give stderr time to be captured.
-	time.Sleep(200 * time.Millisecond)
-
-	// Shutdown.
+	// Shutdown — readers are drained before the process is reaped, so no sleep is needed.
 	if err := proc.Stop(ctx, 5*time.Second, 2*time.Second); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
