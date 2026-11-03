@@ -187,13 +187,19 @@ func computeCacheKey(cfg *PrepareConfig) (string, error) {
 func hashDir(dir string) ([]byte, error) {
 	h := sha256.New()
 
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("abs dir: %w", err)
+	}
+
 	type fileEntry struct {
-		relPath string
-		absPath string
+		relPath  string
+		hashPath string // the path whose content we hash (may differ for outside-tree symlinks)
+		symlink  bool
 	}
 	var files []fileEntry
 
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -208,20 +214,35 @@ func hashDir(dir string) ([]byte, error) {
 		rel = filepath.ToSlash(rel)
 
 		if d.Type()&fs.ModeSymlink != 0 {
-			// Hash symlinks by their target.
 			target, err := os.Readlink(path)
 			if err != nil {
 				return fmt.Errorf("readlink %s: %w", rel, err)
 			}
-			_, _ = fmt.Fprintf(h, "symlink:%s\x00%s\x00", rel, target)
-			files = append(files, fileEntry{relPath: rel, absPath: path})
+
+			resolved := target
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(filepath.Dir(path), resolved)
+			}
+			resolved, err = filepath.Abs(resolved)
+			if err != nil {
+				return fmt.Errorf("resolve symlink %s: %w", rel, err)
+			}
+
+			if isInsideDir(resolved, absDir) {
+				// In-tree symlink: hash the link text (the copy recreates the link).
+				files = append(files, fileEntry{relPath: rel, hashPath: path, symlink: true})
+			} else {
+				// Outside-tree symlink: hash the target content (the copy
+				// materialises the target as a regular file).
+				files = append(files, fileEntry{relPath: rel, hashPath: resolved, symlink: false})
+			}
 			return nil
 		}
 
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("unsupported file type %s for %s", d.Type(), rel)
 		}
-		files = append(files, fileEntry{relPath: rel, absPath: path})
+		files = append(files, fileEntry{relPath: rel, hashPath: path, symlink: false})
 		return nil
 	})
 	if err != nil {
@@ -234,14 +255,19 @@ func hashDir(dir string) ([]byte, error) {
 	})
 
 	for _, f := range files {
-		info, err := os.Lstat(f.absPath)
-		if err != nil {
-			return nil, err
+		if f.symlink {
+			// In-tree symlink: hash the link target string.
+			target, err := os.Readlink(f.hashPath)
+			if err != nil {
+				return nil, err
+			}
+			_, _ = fmt.Fprintf(h, "symlink:%s\x00%s\x00", f.relPath, target)
+			continue
 		}
 
-		if info.Mode()&fs.ModeSymlink != 0 {
-			// Already hashed above via symlink prefix.
-			continue
+		info, err := os.Lstat(f.hashPath)
+		if err != nil {
+			return nil, err
 		}
 
 		mode := "644"
@@ -249,7 +275,7 @@ func hashDir(dir string) ([]byte, error) {
 			mode = "755"
 		}
 
-		content, err := os.ReadFile(f.absPath)
+		content, err := os.ReadFile(f.hashPath)
 		if err != nil {
 			return nil, err
 		}
@@ -263,6 +289,11 @@ func hashDir(dir string) ([]byte, error) {
 }
 
 func copyDir(src, dst string) error {
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		return fmt.Errorf("abs source: %w", err)
+	}
+
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -280,13 +311,46 @@ func copyDir(src, dst string) error {
 			if err != nil {
 				return fmt.Errorf("readlink %s: %w", rel, err)
 			}
-			return os.Symlink(linkTarget, target)
+
+			// Resolve the symlink's absolute destination.
+			resolved := linkTarget
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(filepath.Dir(path), resolved)
+			}
+			resolved, err = filepath.Abs(resolved)
+			if err != nil {
+				return fmt.Errorf("resolve symlink %s: %w", rel, err)
+			}
+
+			// If the symlink points within the source tree, recreate it as a
+			// link (it will resolve correctly in the copy).
+			if isInsideDir(resolved, absSrc) {
+				return os.Symlink(linkTarget, target)
+			}
+
+			// Outside-tree symlink: verify the target exists, then copy its
+			// content so the prepared dir is self-contained.
+			fi, err := os.Stat(resolved)
+			if err != nil {
+				return fmt.Errorf("symlink %s points outside source tree and target is missing: %w", rel, err)
+			}
+			if fi.IsDir() {
+				return fmt.Errorf("symlink %s points to directory outside source tree; not supported", rel)
+			}
+			return copyFile(resolved, target)
 		}
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("unsupported file type %s for %s", d.Type(), rel)
 		}
 		return copyFile(path, target)
 	})
+}
+
+// isInsideDir reports whether path is inside dir. Both must be absolute and clean.
+func isInsideDir(path, dir string) bool {
+	// Ensure dir ends with separator for prefix comparison.
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	return strings.HasPrefix(filepath.Clean(path)+string(filepath.Separator), prefix)
 }
 
 func copyFile(src, dst string) error {
@@ -343,6 +407,18 @@ func runPrepareCommand(ctx context.Context, tools map[string]string, cmd string,
 	execCmd := exec.CommandContext(ctx, name, args...)
 	execCmd.Dir = dir
 	execCmd.Env = os.Environ()
+	execCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// On context cancellation, send SIGTERM to the process group so children
+	// are also stopped. WaitDelay bounds how long Run waits for I/O to drain
+	// after the cancel function fires.
+	execCmd.Cancel = func() error {
+		if execCmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-execCmd.Process.Pid, syscall.SIGTERM)
+	}
+	execCmd.WaitDelay = 5 * time.Second
 
 	var output bytes.Buffer
 	execCmd.Stdout = &output

@@ -448,6 +448,97 @@ func TestPrepareSymlinkChangesInvalidateCache(t *testing.T) {
 	}
 }
 
+func TestPrepareOutsideTreeSymlink(t *testing.T) {
+	// Create an external file outside the source tree.
+	externalDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(externalDir, "shared.js"), []byte("module.exports = 'shared'"), 0o644); err != nil {
+		t.Fatalf("write shared.js: %v", err)
+	}
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "main.js"), []byte("require('./lib')"), 0o644); err != nil {
+		t.Fatalf("write main.js: %v", err)
+	}
+
+	// Create a symlink that points outside the source tree.
+	if err := os.Symlink(filepath.Join(externalDir, "shared.js"), filepath.Join(srcDir, "lib.js")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	cfg := &actor.PrepareConfig{
+		SourceDir: srcDir,
+		CacheDir:  cacheDir,
+	}
+
+	ctx := context.Background()
+	res, err := actor.Prepare(ctx, cfg)
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	// The outside-tree symlink should be materialised as a regular file
+	// containing the target's content.
+	libPath := filepath.Join(res.Dir, "lib.js")
+	fi, err := os.Lstat(libPath)
+	if err != nil {
+		t.Fatalf("lstat lib.js in prepared dir: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("expected lib.js to be a regular file (materialised from outside-tree symlink), not a symlink")
+	}
+
+	content, err := os.ReadFile(libPath)
+	if err != nil {
+		t.Fatalf("read lib.js: %v", err)
+	}
+	if string(content) != "module.exports = 'shared'" {
+		t.Errorf("unexpected content: %s", content)
+	}
+}
+
+func TestPrepareOutsideTreeSymlinkChangesInvalidateCache(t *testing.T) {
+	externalDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(externalDir, "shared.js"), []byte("v1"), 0o644); err != nil {
+		t.Fatalf("write shared.js: %v", err)
+	}
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "main.js"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write main.js: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(externalDir, "shared.js"), filepath.Join(srcDir, "lib.js")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	cfg := &actor.PrepareConfig{
+		SourceDir: srcDir,
+		CacheDir:  cacheDir,
+	}
+
+	ctx := context.Background()
+
+	res1, err := actor.Prepare(ctx, cfg)
+	if err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+
+	// Change the external file content.
+	if err := os.WriteFile(filepath.Join(externalDir, "shared.js"), []byte("v2"), 0o644); err != nil {
+		t.Fatalf("update shared.js: %v", err)
+	}
+
+	res2, err := actor.Prepare(ctx, cfg)
+	if err != nil {
+		t.Fatalf("second prepare: %v", err)
+	}
+
+	if res1.Dir == res2.Dir {
+		t.Error("expected different cache dirs when outside-tree symlink target content changes")
+	}
+}
+
 func TestPrepareCancelledContext(t *testing.T) {
 	srcDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(srcDir, "main.js"), []byte("ok"), 0o644); err != nil {

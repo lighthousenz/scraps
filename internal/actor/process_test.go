@@ -248,6 +248,54 @@ func TestHelperProcess(t *testing.T) {
 			}
 		}
 
+	case "child-holds-pipes":
+		// Actor that spawns a child inheriting stdout/stderr, then exits cleanly.
+		// The child sleeps forever, keeping the pipes open.
+		//nolint:noctx // Intentionally unmanaged child to test pipe-holding behavior.
+		childCmd := exec.Command("sleep", "3600")
+		childCmd.Stdout = os.Stdout
+		childCmd.Stderr = os.Stderr
+		if err := childCmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to start child: %v\n", err)
+			os.Exit(1)
+		}
+		// Respond to protocol normally.
+		for scanner.Scan() {
+			line := scanner.Text()
+			var req struct {
+				JSONRPC string          `json:"jsonrpc"`
+				ID      int64           `json:"id"`
+				Method  string          `json:"method"`
+				Params  json.RawMessage `json:"params"`
+			}
+			_ = json.Unmarshal([]byte(line), &req)
+			switch req.Method {
+			case "scraps/initialize":
+				var params protocol.InitializeParams
+				_ = json.Unmarshal(req.Params, &params)
+				resp := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"result": map[string]any{
+						"protocol": params.Protocol,
+						"outputs":  map[string]any{},
+					},
+				}
+				data, _ := json.Marshal(resp)
+				_, _ = fmt.Fprintln(os.Stdout, string(data))
+			case "scraps/shutdown":
+				resp := map[string]any{
+					"jsonrpc": "2.0",
+					"id":      req.ID,
+					"result":  map[string]any{},
+				}
+				data, _ := json.Marshal(resp)
+				_, _ = fmt.Fprintln(os.Stdout, string(data))
+				// Exit without waiting for child — child keeps pipes open.
+				return
+			}
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "unknown helper mode: %s\n", mode)
 		os.Exit(2)
@@ -612,6 +660,88 @@ func TestBuildCommandMiseMissing(t *testing.T) {
 	_, _, err := actor.BuildCommand(tools, "node main.mjs")
 	if !errors.Is(err, actor.ErrMiseNotFound) {
 		t.Errorf("expected ErrMiseNotFound, got %v", err)
+	}
+}
+
+func TestProcessStopWithLingeringChild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping lingering child test in short mode")
+	}
+
+	proc, dir := startTestActor(t, "child-holds-pipes")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Initialize.
+	_, err := proc.Client().Initialize(ctx, &protocol.InitializeParams{
+		Protocol:  1,
+		Name:      "test",
+		Kind:      "test",
+		Workdir:   filepath.Join(dir, "workdir"),
+		Artefacts: filepath.Join(dir, "artefacts"),
+	})
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	pid := proc.Pid()
+
+	// Stop must complete within a reasonable time, not hang forever waiting
+	// for the child to release the pipes. The child is in the same process
+	// group, so Stop's SIGTERM escalation will kill it and unblock the readers.
+	stopDone := make(chan error, 1)
+	go func() {
+		// Short shutdown timeout so we quickly escalate to SIGTERM.
+		stopDone <- proc.Stop(ctx, 1*time.Second, 2*time.Second)
+	}()
+
+	select {
+	case err := <-stopDone:
+		// Stop should report that SIGTERM escalation was needed.
+		if err != nil {
+			if !strings.Contains(err.Error(), "SIGTERM") {
+				t.Errorf("expected SIGTERM escalation error, got: %v", err)
+			}
+		}
+		t.Logf("stop returned: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Stop hung — did not return within 20s (child holding pipes)")
+	}
+
+	assertProcessGroupGone(t, pid)
+}
+
+func TestProcessStopEscalationError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping escalation error test in short mode")
+	}
+
+	proc, dir := startTestActor(t, "ignore-sigterm")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := proc.Client().Initialize(ctx, &protocol.InitializeParams{
+		Protocol:  1,
+		Name:      "test",
+		Kind:      "test",
+		Workdir:   filepath.Join(dir, "workdir"),
+		Artefacts: filepath.Join(dir, "artefacts"),
+	})
+	if err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	err = proc.Stop(ctx, 1*time.Second, 1*time.Second)
+	if err == nil {
+		t.Fatal("expected error from Stop when escalation was required")
+	}
+	// Verify the error message is well-formed (no %!w(<nil>)).
+	if strings.Contains(err.Error(), "%!w") || strings.Contains(err.Error(), "<nil>") {
+		t.Errorf("malformed error message: %v", err)
+	}
+	// Should mention the escalation level (SIGTERM or SIGKILL).
+	if !strings.Contains(err.Error(), "SIGTERM") && !strings.Contains(err.Error(), "SIGKILL") {
+		t.Errorf("expected escalation context in error, got: %v", err)
 	}
 }
 

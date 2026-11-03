@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,7 +23,6 @@ type Process struct {
 	client    *protocol.Client
 	logFile   *os.File
 	logMu     sync.Mutex
-	done      chan struct{}
 	exited    chan struct{}
 	stdinPipe io.WriteCloser
 
@@ -115,7 +115,6 @@ func Start(ctx context.Context, cfg *StartConfig) (*Process, error) {
 	p := &Process{
 		cmd:        cmd,
 		logFile:    logFile,
-		done:       make(chan struct{}),
 		exited:     make(chan struct{}),
 		stdinPipe:  stdinPipe,
 		stderrDone: make(chan struct{}),
@@ -144,7 +143,13 @@ func Start(ctx context.Context, cfg *StartConfig) (*Process, error) {
 		p.client.Run()
 	}()
 
-	// Wait for readers to finish before reaping the process.
+	// Wait for pipe readers to finish, then reap the process. The readers
+	// must finish before cmd.Wait because Wait closes the StdoutPipe and
+	// StderrPipe read ends. A child that inherited the actor's pipes keeps
+	// them open after the actor exits, but Stop/Kill send SIGTERM/SIGKILL to
+	// the process group (which includes same-group children), causing them to
+	// exit and close the pipes. For the rare case of a detached child (setsid),
+	// Stop and Kill have their own bounded waits on p.exited.
 	go func() {
 		<-p.client.Done()
 		<-p.stderrDone
@@ -194,16 +199,26 @@ func (p *Process) Stop(ctx context.Context, shutdownTimeout, termTimeout time.Du
 	select {
 	case <-p.exited:
 		p.cleanup()
-		return fmt.Errorf("actor required SIGTERM to stop: %w", p.exitResult(shutdownErr))
+		if exitErr := p.exitResult(shutdownErr); exitErr != nil {
+			return fmt.Errorf("actor required SIGTERM to stop: %w", exitErr)
+		}
+		return errors.New("actor required SIGTERM to stop")
 	case <-time.After(termTimeout):
 	}
 
 	// SIGKILL the process group.
 	p.signalGroup(syscall.SIGKILL)
 
-	<-p.exited
+	select {
+	case <-p.exited:
+	case <-ctx.Done():
+		return fmt.Errorf("actor did not exit after SIGKILL: %w", ctx.Err())
+	}
 	p.cleanup()
-	return fmt.Errorf("actor required SIGKILL to stop: %w", p.exitResult(shutdownErr))
+	if exitErr := p.exitResult(shutdownErr); exitErr != nil {
+		return fmt.Errorf("actor required SIGKILL to stop: %w", exitErr)
+	}
+	return errors.New("actor required SIGKILL to stop")
 }
 
 // exitResult combines shutdown and exit errors into a single error.
@@ -218,12 +233,18 @@ func (p *Process) exitResult(shutdownErr error) error {
 }
 
 // ExitErr returns the error from the process exit, if any.
-func (p *Process) ExitErr() error {
-	<-p.exited
-	return p.exitErr
+// It blocks until the process exits or ctx is cancelled.
+func (p *Process) ExitErr(ctx context.Context) (error, bool) {
+	select {
+	case <-p.exited:
+		return p.exitErr, true
+	case <-ctx.Done():
+		return ctx.Err(), false
+	}
 }
 
 // Kill sends SIGTERM followed by SIGKILL after termTimeout to the process group.
+// It waits up to termTimeout after SIGKILL for the process to exit.
 func (p *Process) Kill(termTimeout time.Duration) {
 	p.signalGroup(syscall.SIGTERM)
 	select {
@@ -233,8 +254,13 @@ func (p *Process) Kill(termTimeout time.Duration) {
 	case <-time.After(termTimeout):
 	}
 	p.signalGroup(syscall.SIGKILL)
-	<-p.exited
-	p.cleanup()
+	select {
+	case <-p.exited:
+		p.cleanup()
+	case <-time.After(termTimeout):
+		// Best-effort: close stdin so the process cannot read further.
+		_ = p.stdinPipe.Close()
+	}
 }
 
 // Exited returns a channel that is closed when the process exits.
@@ -260,7 +286,8 @@ func (p *Process) signalGroup(sig syscall.Signal) {
 
 func (p *Process) cleanup() {
 	_ = p.stdinPipe.Close()
-	// Wait for stderr capture to finish before closing the log file.
+	// By the time cleanup is called, p.exited is closed, which means the
+	// reaper has already waited for stderrDone. Safe to close the log file.
 	<-p.stderrDone
 	p.logMu.Lock()
 	_ = p.logFile.Close()
