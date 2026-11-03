@@ -37,7 +37,8 @@ func TestMain(m *testing.M) {
 
 func TestSubcommandStubsExit3(t *testing.T) {
 	bin := builtBin
-	cmds := []string{"init", "lock", "schema", "validate", "run", "diagram", "explain"}
+	// validate is implemented; excluded from stub tests.
+	cmds := []string{"init", "lock", "schema", "run", "diagram", "explain"}
 	for _, name := range cmds {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), bin, name)
@@ -54,6 +55,24 @@ func TestSubcommandStubsExit3(t *testing.T) {
 				t.Fatalf("expected output to contain %q, got %q", want, string(out))
 			}
 		})
+	}
+}
+
+func TestValidateExitsWithProblems(t *testing.T) {
+	bin := builtBin
+	// validate without a scraps.yaml should exit 2
+	cmd := exec.CommandContext(t.Context(), bin, "validate")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error, got %v (output: %s)", err, out)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("expected exit code 2, got %d (output: %s)", exitErr.ExitCode(), out)
+	}
+	if !strings.Contains(string(out), "scraps.yaml not found") {
+		t.Fatalf("expected scraps.yaml not found, got %q", string(out))
 	}
 }
 

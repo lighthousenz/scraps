@@ -1,0 +1,9 @@
+name: docx-checker
+role: checker
+protocol: 1
+run: python -m docx_checker
+
+operations:
+  has-paragraphs:  { params: { texts: { type: array, items: { type: string } } }, returns: { match: { type: boolean } } }
+  has-one-of:      { params: { texts: { type: array, items: { type: string } } }, returns: { match: { type: boolean } } }
+  paragraph-count: { params: { greater-than: { type: integer } }, returns: { match: { type: boolean } } }

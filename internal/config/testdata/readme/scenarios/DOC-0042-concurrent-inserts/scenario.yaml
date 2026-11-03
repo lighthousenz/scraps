@@ -1,0 +1,37 @@
+id: DOC-0042
+title: Concurrent inserts at document start drop a paragraph
+symptom: >
+  Two users each insert a paragraph at the start while out of sync with
+  each other. After they sync, only one of the paragraphs survives.
+links:
+  ticket: ENG-3901
+  upstream: acme/docengine#1234
+tags: [collab, lists]
+
+fixtures:
+  doc: fixtures/two-paragraphs/
+
+actors:
+  server: { uses: collab-server, with: { document: "${{ fixtures.doc }}" } }
+  alice:  { uses: editor, with: { server: server } }
+  bob:    { uses: editor, with: { server: server } }
+  carol:  { uses: editor, with: { server: server }, start: on-demand }
+
+steps:
+  - alice, bob: pause-sync
+  - alice: { insert-paragraph: { at: start, text: alpha } }
+  - bob:   { insert-paragraph: { at: start, text: beta } }
+  - alice, bob: resume-sync
+  - alice, bob: { await: converged }
+  - server: stop
+  - server: start
+  - carol: start
+  - carol: { snapshot: { as: final } }
+
+outcomes:
+  correct:   { final: { has-paragraphs: [alpha, beta] } }
+  drops-one: { final: { has-one-of: [alpha, beta] } }
+
+history:
+  - { when: { docengine: "<2.31.0" },  expect: correct }
+  - { when: { docengine: ">=2.31.0" }, expect: drops-one }
