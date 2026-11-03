@@ -37,8 +37,8 @@ func TestMain(m *testing.M) {
 
 func TestSubcommandStubsExit3(t *testing.T) {
 	bin := builtBin
-	// validate is implemented; excluded from stub tests.
-	cmds := []string{"init", "lock", "schema", "run", "diagram", "explain"}
+	// Only lock and schema are still stubs.
+	cmds := []string{"lock", "schema"}
 	for _, name := range cmds {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), bin, name)
@@ -55,6 +55,87 @@ func TestSubcommandStubsExit3(t *testing.T) {
 				t.Fatalf("expected output to contain %q, got %q", want, string(out))
 			}
 		})
+	}
+}
+
+func TestRunExitCode2NoProject(t *testing.T) {
+	bin := builtBin
+	cmd := exec.CommandContext(t.Context(), bin, "run")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error, got %v (output: %s)", err, out)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("expected exit code 2, got %d (output: %s)", exitErr.ExitCode(), out)
+	}
+}
+
+func TestExplainExitCode2NoArgs(t *testing.T) {
+	bin := builtBin
+	cmd := exec.CommandContext(t.Context(), bin, "explain")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error, got %v (output: %s)", err, out)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("expected exit code 2, got %d (output: %s)", exitErr.ExitCode(), out)
+	}
+}
+
+func TestDiagramExitCode2NoArgs(t *testing.T) {
+	bin := builtBin
+	cmd := exec.CommandContext(t.Context(), bin, "diagram")
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error, got %v (output: %s)", err, out)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("expected exit code 2, got %d (output: %s)", exitErr.ExitCode(), out)
+	}
+}
+
+func TestInitCreatesFiles(t *testing.T) {
+	bin := builtBin
+	dir := t.TempDir()
+	cmd := exec.CommandContext(t.Context(), bin, "init")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init failed: %v (output: %s)", err, out)
+	}
+	// Check scraps.yaml was created.
+	if _, err := os.Stat(filepath.Join(dir, "scraps.yaml")); os.IsNotExist(err) {
+		t.Error("scraps.yaml not created")
+	}
+	// Check scenario was created.
+	scenPath := filepath.Join(dir, "scenarios", "example", "scenario.yaml")
+	if _, err := os.Stat(scenPath); os.IsNotExist(err) {
+		t.Error("scenario.yaml not created")
+	}
+}
+
+func TestInitExitCode2AlreadyExists(t *testing.T) {
+	bin := builtBin
+	dir := t.TempDir()
+	// Create scraps.yaml first.
+	if err := os.WriteFile(filepath.Join(dir, "scraps.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), bin, "init")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error, got %v (output: %s)", err, out)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("expected exit code 2, got %d (output: %s)", exitErr.ExitCode(), out)
 	}
 }
 

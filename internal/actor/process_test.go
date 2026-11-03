@@ -353,10 +353,20 @@ func assertProcessGroupGone(t *testing.T, pid int) {
 	if pid <= 0 {
 		return
 	}
-	// Try to signal the process group. If it's gone, we get an error.
-	err := syscall.Kill(-pid, 0)
-	if err == nil {
-		t.Errorf("process group %d still exists after cleanup", pid)
+	// Poll until the process group is gone. After SIGKILL the leader is reaped
+	// by cmd.Wait(), but orphaned children may linger briefly until init adopts
+	// and reaps them, especially on Linux CI under load.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := syscall.Kill(-pid, 0)
+		if err != nil {
+			return // group is gone
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("process group %d still exists after cleanup", pid)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

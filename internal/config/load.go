@@ -27,12 +27,13 @@ func (p Problem) String() string {
 
 // LoadedProject is the result of loading a scraps project.
 type LoadedProject struct {
-	Project    model.Project
-	ProjectDir string
-	Scenarios  []LoadedScenario
-	Actors     map[string]*model.ActorDefinition
-	Checkers   map[string]*model.ActorDefinition
-	LockFile   *lock.LockFile
+	Project        model.Project
+	ProjectDir     string
+	Scenarios      []LoadedScenario
+	Actors         map[string]*model.ActorDefinition
+	Checkers       map[string]*model.ActorDefinition
+	CheckerSources map[string]string // checker name → source string from scraps.yaml
+	LockFile       *lock.LockFile
 }
 
 // LoadedScenario holds a scenario and its source path.
@@ -84,10 +85,11 @@ func LoadProject(scenarioPaths []string) (*LoadedProject, []Problem) {
 	}
 
 	result := &LoadedProject{
-		Project:    *proj,
-		ProjectDir: projectDir,
-		Actors:     make(map[string]*model.ActorDefinition),
-		Checkers:   make(map[string]*model.ActorDefinition),
+		Project:        *proj,
+		ProjectDir:     projectDir,
+		Actors:         make(map[string]*model.ActorDefinition),
+		Checkers:       make(map[string]*model.ActorDefinition),
+		CheckerSources: make(map[string]string),
 	}
 
 	// Load lock file if it exists
@@ -122,6 +124,7 @@ func LoadProject(scenarioPaths []string) (*LoadedProject, []Problem) {
 				})
 			}
 			result.Checkers[checkerDef.Name] = checkerDef
+			result.CheckerSources[checkerDef.Name] = source
 		}
 	}
 
