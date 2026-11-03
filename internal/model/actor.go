@@ -1,6 +1,10 @@
 package model
 
-import "go.yaml.in/yaml/v3"
+import (
+	"fmt"
+
+	"go.yaml.in/yaml/v3"
+)
 
 // ActorDefinition represents an actor.yaml file.
 type ActorDefinition struct {
@@ -38,12 +42,34 @@ type OutputDef struct {
 	Type string `yaml:"type" json:"type"`
 }
 
+// LifecycleEntry is a single lifecycle operation: either a bare string
+// (e.g. "disconnect") or a one-key mapping (e.g. {snapshot: {as: final-state}}).
+type LifecycleEntry map[string]any
+
+// UnmarshalYAML accepts both a bare scalar and a mapping node.
+func (e *LifecycleEntry) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		*e = LifecycleEntry{node.Value: nil}
+		return nil
+	case yaml.MappingNode:
+		var m map[string]any
+		if err := node.Decode(&m); err != nil {
+			return err
+		}
+		*e = LifecycleEntry(m)
+		return nil
+	default:
+		return fmt.Errorf("lifecycle entry must be a string or mapping, got %v", node.Kind)
+	}
+}
+
 // Lifecycle describes the phases of an actor's execution.
 type Lifecycle struct {
-	Start   []map[string]any `yaml:"start"   json:"start,omitempty"`
+	Start   []LifecycleEntry `yaml:"start"   json:"start,omitempty"`
 	Ready   string           `yaml:"ready"   json:"ready,omitempty"`
-	Stop    []map[string]any `yaml:"stop"    json:"stop,omitempty"`
-	Collect []map[string]any `yaml:"collect" json:"collect,omitempty"`
+	Stop    []LifecycleEntry `yaml:"stop"    json:"stop,omitempty"`
+	Collect []LifecycleEntry `yaml:"collect" json:"collect,omitempty"`
 }
 
 // ConditionDef describes a polled condition.

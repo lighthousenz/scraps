@@ -88,8 +88,15 @@ func (o *Outcome) UnmarshalYAML(node *yaml.Node) error {
 		valNode := node.Content[i+1]
 
 		if keyNode.Value == "step-error" {
+			// Decode strictly: reject unknown keys in step-error matchers.
 			var matcher StepErrorMatcher
-			if err := valNode.Decode(&matcher); err != nil {
+			raw, err := yaml.Marshal(valNode)
+			if err != nil {
+				return fmt.Errorf("decoding step-error: %w", err)
+			}
+			dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+			dec.KnownFields(true)
+			if err := dec.Decode(&matcher); err != nil {
 				return fmt.Errorf("decoding step-error: %w", err)
 			}
 			checks = append(checks, Check{

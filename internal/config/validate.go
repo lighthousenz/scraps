@@ -15,6 +15,7 @@ import (
 
 	"github.com/lighthousenz/scraps/internal/expr"
 	"github.com/lighthousenz/scraps/internal/graph"
+	"github.com/lighthousenz/scraps/internal/lock"
 	"github.com/lighthousenz/scraps/internal/model"
 )
 
@@ -36,6 +37,13 @@ var builtinChecks = map[string]bool{
 func Validate(lp *LoadedProject) []Problem {
 	var problems []Problem
 
+	// Validate expressions inside actor definitions.
+	for name, def := range lp.Actors {
+		actorScope := buildActorScope(def, lp)
+		actorPath := actorPathForDef(name, lp)
+		problems = append(problems, validateActorExprs(def, actorPath, actorScope)...)
+	}
+
 	for i := range lp.Scenarios {
 		ls := &lp.Scenarios[i]
 		probs := validateScenario(ls, lp)
@@ -43,6 +51,15 @@ func Validate(lp *LoadedProject) []Problem {
 	}
 
 	return problems
+}
+
+// actorPathForDef returns the actor.yaml path for a named actor definition.
+func actorPathForDef(name string, lp *LoadedProject) string {
+	source := lp.Project.Actors[name]
+	if source != "" && lock.IsLocalSource(source) {
+		return filepath.Join(lp.ProjectDir, source, "actor.yaml")
+	}
+	return fmt.Sprintf("actors/%s/actor.yaml", name)
 }
 
 func validateScenario(ls *LoadedScenario, lp *LoadedProject) []Problem {
@@ -70,19 +87,25 @@ func validateScenario(ls *LoadedScenario, lp *LoadedProject) []Problem {
 	}
 
 	// --- Step validation ---
-	stepActors := make(map[string]bool)
-	stepOps := make(map[string]map[string]bool) // actor -> operations used
-	artefactOps := make(map[string]string)      // as-value -> actor that produced it
+	artefactOps := make(map[string]string) // as-value -> actor that produced it
 	for si, step := range s.Steps {
 		for _, target := range step.Targets {
 			if _, ok := s.Actors[target]; !ok {
 				problems = append(problems, prob(path, step.Node, fmt.Sprintf("step %d: target %q is not declared in actors", si+1, target)))
 			}
-			stepActors[target] = true
-			if stepOps[target] == nil {
-				stepOps[target] = make(map[string]bool)
+		}
+
+		// Builtin step validation
+		switch step.Operation {
+		case "await":
+			condName, _ := step.Params["condition"].(string)
+			if condName == "" {
+				problems = append(problems, prob(path, step.Node, fmt.Sprintf("step %d: await requires a condition name", si+1)))
 			}
-			stepOps[target][step.Operation] = true
+		case "start", "stop":
+			if len(step.Params) > 0 {
+				problems = append(problems, prob(path, step.Node, fmt.Sprintf("step %d: %s does not accept params", si+1, step.Operation)))
+			}
 		}
 
 		// Operation validation
@@ -97,13 +120,17 @@ func validateScenario(ls *LoadedScenario, lp *LoadedProject) []Problem {
 			}
 		}
 
-		// Params validation
-		if !builtinOps[step.Operation] && step.Params != nil {
+		// Params validation (run even when Params is nil to catch missing required params)
+		if !builtinOps[step.Operation] {
+			params := step.Params
+			if params == nil {
+				params = map[string]any{}
+			}
 			for _, target := range step.Targets {
 				def := scenarioActorDefs[target]
 				if def != nil {
 					if opDef, ok := def.Operations[step.Operation]; ok {
-						probs := validateParams(step.Params, opDef.Params, path, step.Node, fmt.Sprintf("step %d", si+1))
+						probs := validateParams(params, opDef.Params, path, step.Node, fmt.Sprintf("step %d", si+1))
 						problems = append(problems, probs...)
 					}
 				}
@@ -136,7 +163,9 @@ func validateScenario(ls *LoadedScenario, lp *LoadedProject) []Problem {
 		}
 	}
 
-	// Also collect artefact names from actor collect phases
+	// Also collect artefact names from actor collect phases.
+	// Artefact names from collect are scoped per actor (artefacts land in per-actor dirs),
+	// so different actors using the same definition do not collide.
 	for actorName, sa := range s.Actors {
 		def := lp.Actors[sa.Uses]
 		if def == nil {
@@ -151,11 +180,7 @@ func validateScenario(ls *LoadedScenario, lp *LoadedProject) []Problem {
 				if paramsMap, ok := params.(map[string]any); ok {
 					if asVal, ok := paramsMap["as"]; ok {
 						if asStr, ok := asVal.(string); ok && !expr.ContainsExpr(asStr) {
-							if existing, dup := artefactOps[asStr]; dup {
-								problems = append(problems, prob(path, nil, fmt.Sprintf("actor %q collect: duplicate artefact name %q (also produced by %s)", actorName, asStr, existing)))
-							} else {
-								artefactOps[asStr] = fmt.Sprintf("collect (%s)", actorName)
-							}
+							artefactOps[asStr] = fmt.Sprintf("collect (%s)", actorName)
 						}
 					}
 				}
@@ -169,12 +194,13 @@ func validateScenario(ls *LoadedScenario, lp *LoadedProject) []Problem {
 		if def == nil {
 			continue
 		}
+		actorFile := actorPathForDef(sa.Uses, lp)
 		for opName := range def.Operations {
 			if builtinOps[opName] {
-				problems = append(problems, prob(filepath.Join(filepath.Dir(path), "..", "actors", sa.Uses, "actor.yaml"), def.Node, fmt.Sprintf("actor %q defines reserved operation %q", actorName, opName)))
+				problems = append(problems, prob(actorFile, def.Node, fmt.Sprintf("actor %q defines reserved operation %q", actorName, opName)))
 			}
 			if strings.HasPrefix(opName, "scraps/") {
-				problems = append(problems, prob(filepath.Join(filepath.Dir(path), "..", "actors", sa.Uses, "actor.yaml"), def.Node, fmt.Sprintf("actor %q defines reserved operation %q (scraps/ prefix)", actorName, opName)))
+				problems = append(problems, prob(actorFile, def.Node, fmt.Sprintf("actor %q defines reserved operation %q (scraps/ prefix)", actorName, opName)))
 			}
 		}
 	}
@@ -494,15 +520,28 @@ func validateStepErrorMatcher(matcher *model.StepErrorMatcher, s *model.Scenario
 	}
 	if matcher.Message != nil {
 		hasField = true
-		// If message is a map with "matches", validate the regex
-		if m, ok := matcher.Message.(map[string]any); ok {
+		switch m := matcher.Message.(type) {
+		case string:
+			// bare string is a valid exact-match message
+		case map[string]any:
 			if pattern, ok := m["matches"]; ok {
 				if patStr, ok := pattern.(string); ok {
 					if _, err := regexp.Compile(patStr); err != nil {
 						problems = append(problems, prob(path, node, fmt.Sprintf("step-error: invalid message regex %q: %s", patStr, err)))
 					}
+				} else {
+					problems = append(problems, prob(path, node, "step-error: message.matches must be a string"))
 				}
+				for k := range m {
+					if k != "matches" {
+						problems = append(problems, prob(path, node, fmt.Sprintf("step-error: message has unknown key %q (only \"matches\" is allowed)", k)))
+					}
+				}
+			} else {
+				problems = append(problems, prob(path, node, "step-error: message map must have a \"matches\" key"))
 			}
+		default:
+			problems = append(problems, prob(path, node, "step-error: message must be a string or { matches: <regex> }"))
 		}
 	}
 	if !hasField {
@@ -584,13 +623,24 @@ func validateParams(params map[string]any, declaredParams map[string]any, path s
 		}
 
 		schemaJSON, err := json.Marshal(schemaObj)
-		if err == nil {
-			compiler := jsonschema.NewCompiler()
-			if err := compiler.AddResource("schema.json", strings.NewReader(string(schemaJSON))); err == nil {
-				sch, err := compiler.Compile("schema.json")
-				if err == nil {
-					if err := sch.Validate(paramsToValidate); err != nil {
-						problems = append(problems, prob(path, node, fmt.Sprintf("%s: param validation failed: %s", context, err)))
+		if err != nil {
+			problems = append(problems, prob(path, node, fmt.Sprintf("%s: cannot marshal param schema: %s", context, err)))
+		} else {
+			var decoded any
+			if err := json.Unmarshal(schemaJSON, &decoded); err != nil {
+				problems = append(problems, prob(path, node, fmt.Sprintf("%s: cannot decode param schema: %s", context, err)))
+			} else {
+				compiler := jsonschema.NewCompiler()
+				if err := compiler.AddResource("schema.json", decoded); err != nil {
+					problems = append(problems, prob(path, node, fmt.Sprintf("%s: invalid param schema: %s", context, err)))
+				} else {
+					sch, err := compiler.Compile("schema.json")
+					if err != nil {
+						problems = append(problems, prob(path, node, fmt.Sprintf("%s: invalid param schema: %s", context, err)))
+					} else {
+						if err := sch.Validate(paramsToValidate); err != nil {
+							problems = append(problems, prob(path, node, fmt.Sprintf("%s: param validation failed: %s", context, err)))
+						}
 					}
 				}
 			}
@@ -642,6 +692,54 @@ func buildScope(s *model.Scenario, lp *LoadedProject) *expr.StaticScope {
 		}
 	}
 	return scope
+}
+
+// buildActorScope builds a scope for checking expressions inside an actor definition.
+func buildActorScope(def *model.ActorDefinition, lp *LoadedProject) *expr.StaticScope {
+	scope := &expr.StaticScope{
+		Subjects: make(map[string]bool),
+		Inputs:   make(map[string]expr.InputInfo),
+	}
+	for name := range lp.Project.Subjects {
+		scope.Subjects[name] = true
+	}
+	for inputName, inputDef := range def.Inputs {
+		info := expr.InputInfo{IsActor: inputDef.Type == "actor"}
+		if info.IsActor && inputDef.Kind != "" {
+			// Find the actor definition for this kind and populate its outputs.
+			for _, actorDef := range lp.Actors {
+				kind := actorDef.Kind
+				if kind == "" {
+					kind = actorDef.Name
+				}
+				if kind == inputDef.Kind {
+					info.Outputs = make(map[string]bool)
+					for outName := range actorDef.Outputs {
+						info.Outputs[outName] = true
+					}
+					break
+				}
+			}
+		}
+		scope.Inputs[inputName] = info
+	}
+	return scope
+}
+
+// validateActorExprs checks all expressions found in an actor definition.
+func validateActorExprs(def *model.ActorDefinition, actorPath string, scope *expr.StaticScope) []Problem {
+	var problems []Problem
+	walkLifecycleExprs := func(entries []model.LifecycleEntry) {
+		for _, entry := range entries {
+			for _, params := range entry {
+				problems = append(problems, validateExprsInValue(params, actorPath, def.Node, scope)...)
+			}
+		}
+	}
+	walkLifecycleExprs(def.Lifecycle.Start)
+	walkLifecycleExprs(def.Lifecycle.Stop)
+	walkLifecycleExprs(def.Lifecycle.Collect)
+	return problems
 }
 
 func prob(path string, node *yaml.Node, msg string) Problem {

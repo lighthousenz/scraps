@@ -7,8 +7,11 @@ import (
 	"strings"
 )
 
-// exprRe matches ${{ ref }} patterns.
-var exprRe = regexp.MustCompile(`\$\{\{\s*([\w.]+)\s*\}\}`)
+// exprRe matches ${{ ref }} patterns. Segments may contain word chars and hyphens.
+var exprRe = regexp.MustCompile(`\$\{\{\s*([\w][\w.-]*)\s*\}\}`)
+
+// malformedExprRe matches any ${{ ... }} to detect malformed expressions.
+var malformedExprRe = regexp.MustCompile(`\$\{\{(.*?)\}\}`)
 
 // Ref is a parsed dotted reference inside ${{ }}.
 type Ref struct {
@@ -324,12 +327,30 @@ func ResolveStringStrict(s string, ctx *Context) (any, error) {
 }
 
 // CheckAllExprs statically checks every expression found in a string.
+// It also reports malformed ${{ }} expressions that don't match the valid pattern.
 func CheckAllExprs(s string, scope *StaticScope) []string {
 	refs := Parse(s)
 	var errs []string
 	for _, ref := range refs {
 		if msg := StaticCheck(ref, scope); msg != "" {
 			errs = append(errs, msg)
+		}
+	}
+
+	// Find malformed expressions: anything matching ${{ ... }} but not the valid pattern.
+	validLocs := exprRe.FindAllStringIndex(s, -1)
+	allLocs := malformedExprRe.FindAllStringSubmatchIndex(s, -1)
+	for _, loc := range allLocs {
+		isValid := false
+		for _, vl := range validLocs {
+			if vl[0] == loc[0] && vl[1] == loc[1] {
+				isValid = true
+				break
+			}
+		}
+		if !isValid {
+			inner := strings.TrimSpace(s[loc[2]:loc[3]])
+			errs = append(errs, fmt.Sprintf("malformed expression \"${{ %s }}\"", inner))
 		}
 	}
 	return errs

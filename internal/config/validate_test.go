@@ -927,3 +927,172 @@ func TestProb_WithNode(t *testing.T) {
 		t.Errorf("prob with node: line=%d col=%d, want 10:5", p.Line, p.Col)
 	}
 }
+
+// --- Scalar step missing required params ---
+
+func TestValidate_ScalarStepMissingRequiredParams(t *testing.T) {
+	lp := minimalProject()
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	// insert-paragraph requires at and text; scalar form has nil Params
+	ls.Scenario.Steps = []model.Step{
+		{Targets: []string{"alice"}, Operation: "insert-paragraph"},
+		{Targets: []string{"srv"}, Operation: "snapshot", Params: map[string]any{"as": "final"}},
+	}
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, `required param "at" is missing`) {
+		t.Errorf("expected missing required param for scalar step, got %v", problems)
+	}
+	if !containsProblem(problems, `required param "text" is missing`) {
+		t.Errorf("expected missing required param 'text' for scalar step, got %v", problems)
+	}
+}
+
+// --- JSON Schema enum validation ---
+
+func TestValidate_ParamEnumMismatch(t *testing.T) {
+	lp := minimalProject()
+	// editor's insert-paragraph has at: {enum: [start, end]} in the real testdata
+	// but our test helper uses {type: string} — add an enum constraint
+	lp.Actors["editor"].Operations["insert-paragraph"] = model.OperationDef{
+		Params: map[string]any{
+			"at":   map[string]any{"enum": []any{"start", "end"}},
+			"text": map[string]any{"type": "string"},
+		},
+	}
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	ls.Scenario.Steps = []model.Step{
+		{Targets: []string{"alice"}, Operation: "insert-paragraph", Params: map[string]any{
+			"at": "middle", "text": "hi",
+		}},
+		{Targets: []string{"srv"}, Operation: "snapshot", Params: map[string]any{"as": "final"}},
+	}
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, "param validation failed") {
+		t.Errorf("expected param enum validation failure, got %v", problems)
+	}
+}
+
+// --- Collect artefact no false duplicate for multi-actor ---
+
+func TestValidate_CollectArtefactMultiActorNoDuplicate(t *testing.T) {
+	lp := minimalProject()
+	// Both alice and bob use the same editor definition which has collect: snapshot {as: final-state}
+	lp.Actors["editor"].Lifecycle.Collect = []model.LifecycleEntry{
+		{"snapshot": map[string]any{"as": "final-state"}},
+	}
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	ls.Scenario.Actors["bob"] = model.ScenarioActor{Uses: "editor", With: map[string]any{"srv": "srv"}}
+	ls.Scenario.Steps = append(ls.Scenario.Steps, model.Step{
+		Targets: []string{"alice"}, Operation: "pause-sync",
+	})
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if containsProblem(problems, "duplicate artefact name") {
+		t.Errorf("collect artefacts from different actors should not conflict, got %v", problems)
+	}
+}
+
+// --- Await missing condition ---
+
+func TestValidate_AwaitMissingCondition(t *testing.T) {
+	lp := minimalProject()
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	// Scalar await with nil Params
+	ls.Scenario.Steps = append(ls.Scenario.Steps, model.Step{
+		Targets: []string{"alice"}, Operation: "await",
+	})
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, "await requires a condition name") {
+		t.Errorf("expected await missing condition problem, got %v", problems)
+	}
+}
+
+// --- Start/stop with params ---
+
+func TestValidate_StartWithParams(t *testing.T) {
+	lp := minimalProject()
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	ls.Scenario.Steps = append(ls.Scenario.Steps, model.Step{
+		Targets: []string{"srv"}, Operation: "stop", Params: map[string]any{"force": true},
+	})
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, "stop does not accept params") {
+		t.Errorf("expected stop-with-params problem, got %v", problems)
+	}
+}
+
+// --- Step-error message validation ---
+
+func TestValidate_StepErrorMessageBadType(t *testing.T) {
+	lp := minimalProject()
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	ls.Scenario.Outcomes = map[string]model.Outcome{
+		"correct": {{Artefact: "final", CheckName: "file-exists", Value: "x"}},
+		"throws":  {{StepError: &model.StepErrorMatcher{Actor: "alice", Message: 42}}},
+	}
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, "message must be a string or") {
+		t.Errorf("expected message type error, got %v", problems)
+	}
+}
+
+func TestValidate_StepErrorMessageMapNoMatches(t *testing.T) {
+	lp := minimalProject()
+	ls := minimalScenario("/project/scenarios/test/scenario.yaml")
+	ls.Scenario.Outcomes = map[string]model.Outcome{
+		"correct": {{Artefact: "final", CheckName: "file-exists", Value: "x"}},
+		"throws": {{StepError: &model.StepErrorMatcher{
+			Actor:   "alice",
+			Message: map[string]any{"match": "wrong key"},
+		}}},
+	}
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	if !containsProblem(problems, `must have a "matches" key`) {
+		t.Errorf("expected message map without matches key error, got %v", problems)
+	}
+}
+
+// --- Reserved op path construction ---
+
+func TestValidate_ReservedOpPathUsesProjectDir(t *testing.T) {
+	lp := minimalProject()
+	lp.Project.Actors = map[string]string{"bad-actor": "./actors/bad-actor"}
+	lp.Actors["bad-actor"] = &model.ActorDefinition{
+		Name: "bad-actor",
+		Kind: "bad-actor",
+		Operations: map[string]model.OperationDef{
+			"start": {},
+		},
+	}
+	ls := minimalScenario("/project/scenarios/deep/nested/scenario.yaml")
+	ls.Scenario.Actors["bad"] = model.ScenarioActor{Uses: "bad-actor"}
+	lp.Scenarios = []LoadedScenario{ls}
+
+	problems := Validate(lp)
+	found := false
+	for _, p := range problems {
+		if strings.Contains(p.Message, `reserved operation "start"`) {
+			if strings.Contains(p.Path, filepath.Join("/project", "actors", "bad-actor", "actor.yaml")) {
+				found = true
+			} else {
+				t.Errorf("reserved op problem has wrong path: %s", p.Path)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected reserved op problem with correct path, got %v", problems)
+	}
+}

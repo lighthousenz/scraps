@@ -24,6 +24,8 @@ func TestParse(t *testing.T) {
 		}},
 		{"run field", "${{ run.id }}", []Ref{{Raw: "run.id", Parts: []string{"run", "id"}}}},
 		{"spaces", "${{  fixtures.doc  }}", []Ref{{Raw: "fixtures.doc", Parts: []string{"fixtures", "doc"}}}},
+		{"hyphenated name", "${{ fixtures.two-paragraphs }}", []Ref{{Raw: "fixtures.two-paragraphs", Parts: []string{"fixtures", "two-paragraphs"}}}},
+		{"hyphenated actor", "${{ actors.collab-server.outputs.url }}", []Ref{{Raw: "actors.collab-server.outputs.url", Parts: []string{"actors", "collab-server", "outputs", "url"}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -202,6 +204,7 @@ func TestCheckAllExprs(t *testing.T) {
 		{"invalid", "${{ fixtures.nope }}", 1},
 		{"multiple one invalid", "${{ fixtures.doc }} ${{ subjects.nope }}", 1},
 		{"no exprs", "hello", 0},
+		{"malformed brackets", "${{ foo['bar'] }}", 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

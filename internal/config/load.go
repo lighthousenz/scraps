@@ -115,12 +115,19 @@ func LoadProject(scenarioPaths []string) (*LoadedProject, []Problem) {
 		checkerDef, probs := loadActorSource(source, "", projectDir, result.LockFile)
 		problems = append(problems, probs...)
 		if checkerDef != nil {
+			if _, dup := result.Checkers[checkerDef.Name]; dup {
+				problems = append(problems, Problem{
+					Path: filepath.Join(projectDir, "scraps.yaml"), Line: 1, Col: 1,
+					Message: fmt.Sprintf("duplicate checker name %q (from %s)", checkerDef.Name, source),
+				})
+			}
 			result.Checkers[checkerDef.Name] = checkerDef
 		}
 	}
 
 	// Find and load scenarios
-	if len(scenarioPaths) == 0 {
+	defaulted := len(scenarioPaths) == 0
+	if defaulted {
 		scenarioPaths = []string{filepath.Join(projectDir, "scenarios")}
 	}
 
@@ -128,7 +135,7 @@ func LoadProject(scenarioPaths []string) (*LoadedProject, []Problem) {
 		if !filepath.IsAbs(sp) {
 			sp = filepath.Join(wd, sp)
 		}
-		scenarios, probs := findAndLoadScenarios(sp, projectDir)
+		scenarios, probs := findAndLoadScenarios(sp, projectDir, defaulted)
 		problems = append(problems, probs...)
 		result.Scenarios = append(result.Scenarios, scenarios...)
 	}
@@ -214,11 +221,14 @@ func loadActorFile(path, expectedName string) (*model.ActorDefinition, []Problem
 	return &def, nil
 }
 
-func findAndLoadScenarios(path, projectDir string) ([]LoadedScenario, []Problem) {
+func findAndLoadScenarios(path, projectDir string, defaulted bool) ([]LoadedScenario, []Problem) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // missing scenarios/ is not an error if nothing was specified
+			if defaulted {
+				return nil, nil // missing scenarios/ is not an error when using the default path
+			}
+			return nil, []Problem{{Path: path, Line: 1, Col: 1, Message: fmt.Sprintf("scenario path does not exist: %s", path)}}
 		}
 		return nil, []Problem{{Path: path, Line: 1, Col: 1, Message: err.Error()}}
 	}
