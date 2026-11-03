@@ -17,6 +17,7 @@ import (
 	"github.com/lighthousenz/scraps/internal/config"
 	"github.com/lighthousenz/scraps/internal/model"
 	"github.com/lighthousenz/scraps/internal/report"
+	"github.com/lighthousenz/scraps/internal/verdict"
 )
 
 func cmdRun(args []string) int {
@@ -94,7 +95,7 @@ func cmdRun(args []string) int {
 		return 2
 	}
 
-	// Parse fail-on.
+	// Parse and validate fail-on.
 	var failOn []string
 	if *failOnStr != "" {
 		failOn = strings.Split(*failOnStr, ",")
@@ -104,6 +105,21 @@ func cmdRun(args []string) int {
 	} else if len(lp.Project.Defaults.FailOn) > 0 {
 		failOn = lp.Project.Defaults.FailOn
 	}
+	if len(failOn) > 0 {
+		valid := make(map[string]bool)
+		for _, v := range verdict.AllVerdicts() {
+			valid[string(v)] = true
+		}
+		for _, v := range failOn {
+			if v == "" {
+				continue
+			}
+			if !valid[v] {
+				fmt.Fprintf(os.Stderr, "error: unknown verdict %q in --fail-on\n", v)
+				return 2
+			}
+		}
+	}
 
 	// Resolve seed.
 	runSeed := *seed
@@ -111,12 +127,21 @@ func cmdRun(args []string) int {
 		runSeed = rand.Int64()
 	}
 
-	// Build run directory.
-	timestamp := time.Now().Format("20060102-150405")
-	runDir := filepath.Join(lp.ProjectDir, ".scraps", "runs", timestamp)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "error: create run directory: %s\n", err)
+	// Build run directory with a unique name per invocation.
+	runsDir := filepath.Join(lp.ProjectDir, ".scraps", "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "error: create runs directory: %s\n", err)
 		return 3
+	}
+	timestamp := time.Now().UTC().Format("2006-01-02T15-04-05Z")
+	runDir := filepath.Join(runsDir, timestamp)
+	if err := os.Mkdir(runDir, 0o755); err != nil {
+		// Collision — append a random suffix to make it unique.
+		runDir = filepath.Join(runsDir, fmt.Sprintf("%s-%04x", timestamp, rand.IntN(0x10000)))
+		if err := os.Mkdir(runDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error: create run directory: %s\n", err)
+			return 3
+		}
 	}
 
 	cacheDir := filepath.Join(lp.ProjectDir, ".scraps", "cache", "prepared")

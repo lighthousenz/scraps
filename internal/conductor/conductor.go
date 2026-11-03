@@ -84,6 +84,10 @@ type scenarioRunner struct {
 	brokenMsg string
 	start     time.Time
 
+	// mu guards exprCtx.Actors, artefactFiles, and artefactActor during
+	// concurrent actor startup within a dependency layer.
+	mu sync.Mutex
+
 	// artefactFiles maps artefact name -> files returned by artefact operations.
 	artefactFiles map[string][]string
 	// artefactActor maps artefact name -> actor name that produced it.
@@ -109,7 +113,10 @@ func Run(ctx context.Context, cfg *RunConfig) (*RunResult, error) {
 		Subjects: cfg.Subjects,
 	}
 
-	failOn := buildFailOnSet(cfg.FailOn)
+	failOn, err := buildFailOnSet(cfg.FailOn)
+	if err != nil {
+		return nil, err
+	}
 
 	results := make([]model.ScenarioResult, len(cfg.Scenarios))
 
@@ -123,12 +130,31 @@ func Run(ctx context.Context, cfg *RunConfig) (*RunResult, error) {
 	for i, ls := range cfg.Scenarios {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			// Mark remaining scenarios as broken and return partial results.
+			for j := i; j < len(cfg.Scenarios); j++ {
+				results[j] = brokenResult(cfg.Scenarios[j].Scenario, cfg, time.Now(), "cancelled")
+			}
+			report.Results = results
+			hasFail := false
+			for _, r := range results {
+				if failOn[r.Verdict] {
+					hasFail = true
+					break
+				}
+			}
+			return &RunResult{
+				Report:  report,
+				FailOn:  failOn,
+				HasFail: hasFail,
+			}, nil
 		default:
 		}
 
-		result := runScenario(ctx, cfg, ls, checkers)
+		result, err := runScenario(ctx, cfg, ls, checkers)
 		results[i] = result
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	report.Results = results
@@ -161,7 +187,10 @@ func RunParallel(ctx context.Context, cfg *RunConfig, parallel int) (*RunResult,
 		Subjects: cfg.Subjects,
 	}
 
-	failOn := buildFailOnSet(cfg.FailOn)
+	failOn, err := buildFailOnSet(cfg.FailOn)
+	if err != nil {
+		return nil, err
+	}
 
 	// Prepare checkers once per scenario when running in parallel.
 	// Each scenario gets its own checker instances for isolation.
@@ -169,6 +198,8 @@ func RunParallel(ctx context.Context, cfg *RunConfig, parallel int) (*RunResult,
 	sem := make(chan struct{}, parallel)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+
+	var runErr error
 
 	for i, ls := range cfg.Scenarios {
 		wg.Add(1)
@@ -187,14 +218,21 @@ func RunParallel(ctx context.Context, cfg *RunConfig, parallel int) (*RunResult,
 			}
 			defer shutdownCheckers(ctx, checkers)
 
-			result := runScenario(ctx, cfg, ls, checkers)
+			result, err := runScenario(ctx, cfg, ls, checkers)
 			mu.Lock()
 			results[idx] = result
+			if err != nil && runErr == nil {
+				runErr = err
+			}
 			mu.Unlock()
 		}(i, ls)
 	}
 
 	wg.Wait()
+
+	if runErr != nil {
+		return nil, runErr
+	}
 	report.Results = results
 
 	hasFail := false
@@ -212,7 +250,10 @@ func RunParallel(ctx context.Context, cfg *RunConfig, parallel int) (*RunResult,
 	}, nil
 }
 
-func runScenario(ctx context.Context, cfg *RunConfig, ls config.LoadedScenario, checkers map[string]*checkerHandle) model.ScenarioResult {
+// runScenario executes a single scenario. It returns a result and optionally
+// an error for harness-level failures (e.g. missing toolchain) that should
+// abort the entire run rather than just marking this scenario broken.
+func runScenario(ctx context.Context, cfg *RunConfig, ls config.LoadedScenario, checkers map[string]*checkerHandle) (model.ScenarioResult, error) {
 	start := time.Now()
 	scenario := ls.Scenario
 
@@ -264,7 +305,7 @@ func runScenario(ctx context.Context, cfg *RunConfig, ls config.LoadedScenario, 
 		if actorDef == nil {
 			sr.broken = true
 			sr.brokenMsg = fmt.Sprintf("actor %q uses unknown definition %q", name, sa.Uses)
-			return sr.buildResult(ctx)
+			return sr.buildResult(ctx), nil
 		}
 
 		workdir := filepath.Join(scenDir, "actors", name)
@@ -276,7 +317,7 @@ func runScenario(ctx context.Context, cfg *RunConfig, ls config.LoadedScenario, 
 		if sourceDir == "" {
 			sr.broken = true
 			sr.brokenMsg = fmt.Sprintf("cannot resolve source for actor %q", sa.Uses)
-			return sr.buildResult(ctx)
+			return sr.buildResult(ctx), nil
 		}
 
 		prepareResult, err := actor.Prepare(ctx, &actor.PrepareConfig{
@@ -290,14 +331,11 @@ func runScenario(ctx context.Context, cfg *RunConfig, ls config.LoadedScenario, 
 		})
 		if err != nil {
 			if errors.Is(err, actor.ErrMiseNotFound) {
-				// This is exit code 3, but at this level we mark broken.
-				sr.broken = true
-				sr.brokenMsg = fmt.Sprintf("prepare %q: %s", name, err)
-				return sr.buildResult(ctx)
+				return sr.buildResult(ctx), fmt.Errorf("prepare %q: %w", name, err)
 			}
 			sr.broken = true
 			sr.brokenMsg = fmt.Sprintf("prepare %q: %s", name, err)
-			return sr.buildResult(ctx)
+			return sr.buildResult(ctx), nil
 		}
 
 		sr.actors[name] = &actorHandle{
@@ -325,7 +363,7 @@ func runScenario(ctx context.Context, cfg *RunConfig, ls config.LoadedScenario, 
 	// Stop everything.
 	sr.stopAll(ctx)
 
-	return sr.buildResult(ctx)
+	return sr.buildResult(ctx), nil
 }
 
 func (sr *scenarioRunner) startAutoActors(ctx context.Context) {
@@ -399,8 +437,19 @@ func (sr *scenarioRunner) startActor(ctx context.Context, name string) error {
 	}
 	ah.process = proc
 
+	// On any error after spawn, stop the process so it does not leak.
+	ok := false
+	defer func() {
+		if !ok {
+			_ = proc.Stop(ctx, shutdownTimeout, termTimeout)
+		}
+	}()
+
 	// Resolve inputs for this actor.
 	inputs := sr.resolveInputs(name)
+	if sr.broken {
+		return fmt.Errorf("resolve inputs for %q: broken", name)
+	}
 
 	// Send scraps/initialize.
 	initCtx, initCancel := context.WithTimeout(ctx, sr.readyTimeout())
@@ -428,10 +477,11 @@ func (sr *scenarioRunner) startActor(ctx context.Context, name string) error {
 	// Update expression context with outputs.
 	sr.updateActorOutputs(name, ah.outputs)
 
-	// Run lifecycle.start operations.
+	// Run lifecycle.start operations with actor-scoped inputs.
+	actorCtx := sr.actorExprContext(inputs)
 	for _, entry := range ah.def.Lifecycle.Start {
 		for opName, rawParams := range entry {
-			params, err := sr.resolveParams(rawParams)
+			params, err := sr.resolveParamsWithCtx(rawParams, actorCtx)
 			if err != nil {
 				return fmt.Errorf("resolve start params for %s: %w", opName, err)
 			}
@@ -456,6 +506,7 @@ func (sr *scenarioRunner) startActor(ctx context.Context, name string) error {
 		}
 	}
 
+	ok = true
 	ah.running = true
 	return nil
 }
@@ -541,10 +592,14 @@ func (sr *scenarioRunner) stopActor(ctx context.Context, name string) {
 		return
 	}
 
+	// Build a per-actor expression context with inputs for lifecycle resolution.
+	actorInputs := sr.resolveInputs(name)
+	actorCtx := sr.actorExprContext(actorInputs)
+
 	// Run lifecycle.stop operations.
 	for _, entry := range ah.def.Lifecycle.Stop {
 		for opName, rawParams := range entry {
-			params, err := sr.resolveParams(rawParams)
+			params, err := sr.resolveParamsWithCtx(rawParams, actorCtx)
 			if err != nil {
 				// Log but don't break on stop errors.
 				continue
@@ -558,7 +613,7 @@ func (sr *scenarioRunner) stopActor(ctx context.Context, name string) {
 	// Run lifecycle.collect operations.
 	for _, entry := range ah.def.Lifecycle.Collect {
 		for opName, rawParams := range entry {
-			params, err := sr.resolveParams(rawParams)
+			params, err := sr.resolveParamsWithCtx(rawParams, actorCtx)
 			if err != nil {
 				continue
 			}
@@ -774,8 +829,10 @@ func (sr *scenarioRunner) recordArtefactResult(actorName string, params map[stri
 		_ = json.Unmarshal(raw, &result)
 	}
 
+	sr.mu.Lock()
 	sr.artefactFiles[asName] = result.Files
 	sr.artefactActor[asName] = actorName
+	sr.mu.Unlock()
 }
 
 func (sr *scenarioRunner) stopAll(ctx context.Context) {
@@ -822,12 +879,21 @@ func (sr *scenarioRunner) buildResult(ctx context.Context) model.ScenarioResult 
 	} else {
 		// Evaluate outcomes.
 		matched := sr.evaluateOutcomes(ctx)
-		classResult = verdict.Classify(verdict.ClassifyInput{
-			Expected: histResult.Expected,
-			Matched:  matched,
-		})
-		if len(matched) == 1 {
-			actual = matched[0]
+		// Re-check broken: checkOutcome may set sr.broken during evaluation.
+		if sr.broken {
+			classResult = verdict.Classify(verdict.ClassifyInput{
+				Expected: histResult.Expected,
+				Broken:   true,
+				Reason:   sr.brokenMsg,
+			})
+		} else {
+			classResult = verdict.Classify(verdict.ClassifyInput{
+				Expected: histResult.Expected,
+				Matched:  matched,
+			})
+			if len(matched) == 1 {
+				actual = matched[0]
+			}
 		}
 	}
 
@@ -993,6 +1059,8 @@ func (sr *scenarioRunner) buildCheckerParams(opName string, value any, def *mode
 }
 
 func (sr *scenarioRunner) setBroken(msg string) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
 	if !sr.broken {
 		sr.broken = true
 		sr.brokenMsg = msg
@@ -1042,6 +1110,8 @@ func (sr *scenarioRunner) buildExprContext() *expr.Context {
 }
 
 func (sr *scenarioRunner) updateActorOutputs(name string, outputs map[string]any) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
 	if sr.exprCtx.Actors == nil {
 		sr.exprCtx.Actors = make(map[string]map[string]any)
 	}
@@ -1052,6 +1122,10 @@ func (sr *scenarioRunner) resolveInputs(name string) map[string]any {
 	sa := sr.scenario.Actors[name]
 	ah := sr.actors[name]
 	inputs := make(map[string]any)
+
+	// Snapshot the expression context under the lock so concurrent goroutines
+	// in the same dependency layer don't race on map reads/writes.
+	ectx := sr.actorExprContext(nil)
 
 	for inputName, inputDef := range ah.def.Inputs {
 		rawVal, ok := sa.With[inputName]
@@ -1077,29 +1151,18 @@ func (sr *scenarioRunner) resolveInputs(name string) map[string]any {
 		} else {
 			// Resolve expressions in string values.
 			if s, ok := rawVal.(string); ok {
-				resolved, err := expr.ResolveStringStrict(s, sr.exprCtx)
-				if err == nil {
-					inputs[inputName] = resolved
-				} else {
-					inputs[inputName] = rawVal
+				resolved, err := expr.ResolveStringStrict(s, ectx)
+				if err != nil {
+					sr.setBroken(fmt.Sprintf("resolve input %q for actor %q: %s", inputName, name, err))
+					return inputs
 				}
+				inputs[inputName] = resolved
 			} else {
 				inputs[inputName] = rawVal
 			}
 		}
 	}
 	return inputs
-}
-
-func (sr *scenarioRunner) resolveParams(rawParams any) (map[string]any, error) {
-	if rawParams == nil {
-		return nil, nil
-	}
-	m, ok := rawParams.(map[string]any)
-	if !ok {
-		return nil, nil
-	}
-	return sr.resolveMapParams(m)
 }
 
 func (sr *scenarioRunner) resolveMapParams(params map[string]any) (map[string]any, error) {
@@ -1146,22 +1209,110 @@ func (sr *scenarioRunner) resolveValue(v any) (any, error) {
 	}
 }
 
+// actorExprContext returns a snapshot of the shared expression context with
+// per-actor Inputs set. This is safe for concurrent use because it copies the
+// shared maps rather than mutating sr.exprCtx.
+func (sr *scenarioRunner) actorExprContext(inputs map[string]any) *expr.Context {
+	sr.mu.Lock()
+	// Snapshot the shared actors map so concurrent writes don't race.
+	actorsCopy := make(map[string]map[string]any, len(sr.exprCtx.Actors))
+	for k, v := range sr.exprCtx.Actors {
+		actorsCopy[k] = v
+	}
+	sr.mu.Unlock()
+	return &expr.Context{
+		Fixtures: sr.exprCtx.Fixtures,
+		Subjects: sr.exprCtx.Subjects,
+		Actors:   actorsCopy,
+		Inputs:   inputs,
+		Run:      sr.exprCtx.Run,
+	}
+}
+
+func (sr *scenarioRunner) resolveParamsWithCtx(rawParams any, ectx *expr.Context) (map[string]any, error) {
+	if rawParams == nil {
+		return nil, nil
+	}
+	m, ok := rawParams.(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	return resolveMapParamsWithCtx(m, ectx)
+}
+
+func resolveMapParamsWithCtx(params map[string]any, ectx *expr.Context) (map[string]any, error) {
+	if params == nil {
+		return nil, nil
+	}
+	resolved := make(map[string]any, len(params))
+	for k, v := range params {
+		rv, err := resolveValueWithCtx(v, ectx)
+		if err != nil {
+			return nil, fmt.Errorf("param %q: %w", k, err)
+		}
+		resolved[k] = rv
+	}
+	return resolved, nil
+}
+
+func resolveValueWithCtx(v any, ectx *expr.Context) (any, error) {
+	switch val := v.(type) {
+	case string:
+		return expr.ResolveStringStrict(val, ectx)
+	case map[string]any:
+		result := make(map[string]any, len(val))
+		for k, v := range val {
+			rv, err := resolveValueWithCtx(v, ectx)
+			if err != nil {
+				return nil, err
+			}
+			result[k] = rv
+		}
+		return result, nil
+	case []any:
+		result := make([]any, len(val))
+		for i, v := range val {
+			rv, err := resolveValueWithCtx(v, ectx)
+			if err != nil {
+				return nil, err
+			}
+			result[i] = rv
+		}
+		return result, nil
+	default:
+		return v, nil
+	}
+}
+
 // Helper functions.
 
-func buildFailOnSet(failOn []string) map[model.Verdict]bool {
+func buildFailOnSet(failOn []string) (map[model.Verdict]bool, error) {
 	if len(failOn) == 0 {
 		defaults := verdict.DefaultFailOn()
 		m := make(map[model.Verdict]bool, len(defaults))
 		for _, v := range defaults {
 			m[v] = true
 		}
-		return m
+		return m, nil
 	}
+
+	valid := make(map[model.Verdict]bool)
+	for _, v := range verdict.AllVerdicts() {
+		valid[v] = true
+	}
+
 	m := make(map[model.Verdict]bool, len(failOn))
 	for _, v := range failOn {
-		m[model.Verdict(v)] = true
+		if v == "" {
+			continue
+		}
+		vv := model.Verdict(v)
+		if !valid[vv] {
+			return nil, fmt.Errorf("unknown verdict %q in --fail-on", v)
+		}
+		m[vv] = true
 	}
-	return m
+	return m, nil
 }
 
 func resolveActorSource(project *config.LoadedProject, actorName string) string {
@@ -1253,18 +1404,16 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 func prepareCheckers(ctx context.Context, cfg *RunConfig) (map[string]*checkerHandle, error) {
 	checkers := make(map[string]*checkerHandle)
 
-	// Build a map from checker name → source string by iterating sources.
-	checkerSources := make(map[string]string)
-	for _, source := range cfg.Project.Project.Checkers {
-		for name, def := range cfg.Project.Checkers {
-			// Match by checking if the definition was loaded from this source.
-			_ = def
-			checkerSources[name] = source
+	// On any error, shut down checkers already started in this call.
+	ok := false
+	defer func() {
+		if !ok {
+			shutdownCheckers(ctx, checkers)
 		}
-	}
+	}()
 
 	for name, def := range cfg.Project.Checkers {
-		source := checkerSources[name]
+		source := cfg.Project.CheckerSources[name]
 		sourceDir := resolveCheckerSource(cfg.Project, source)
 		if sourceDir == "" {
 			continue
@@ -1326,6 +1475,7 @@ func prepareCheckers(ctx context.Context, cfg *RunConfig) (map[string]*checkerHa
 		}
 	}
 
+	ok = true
 	return checkers, nil
 }
 
