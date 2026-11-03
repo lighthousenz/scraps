@@ -1,0 +1,22 @@
+id: TEST-0001
+title: Test scenario
+
+links:
+  ticket: PROJ-123
+
+actors:
+  s: { uses: server }
+  c: { uses: client, with: { server: s } }
+
+steps:
+  - c: { write: { text: hello } }
+  - c: { snapshot: { as: final } }
+
+outcomes:
+  correct:
+    final: { has-text: [hello] }
+  missing:
+    final: { word-count: { equals: 0 } }
+
+history:
+  - { when: { mylib: ">=2.0.0" }, expect: missing }

@@ -1,0 +1,25 @@
+name: actor-b
+description: A test client actor.
+protocol: 1
+run: echo client
+
+inputs:
+  server: { type: actor, kind: actor-a }
+  mode: { type: string, default: normal }
+
+lifecycle:
+  start:
+    - connect
+  ready: synced
+
+conditions:
+  synced: { call: status, until: { connected: true }, every: 50ms }
+  converged: { call: digest, all-equal: true, every: 50ms }
+
+operations:
+  connect: { params: { url: { type: string } } }
+  disconnect: {}
+  status: { returns: { connected: { type: boolean } } }
+  digest: { returns: { value: { type: string } } }
+  write: { params: { text: { type: string } } }
+  snapshot: { params: { as: { type: string } }, artefact: true }

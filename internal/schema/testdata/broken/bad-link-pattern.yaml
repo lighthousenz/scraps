@@ -1,0 +1,10 @@
+id: BAD-LINK
+title: Bad link pattern
+links:
+  ticket: "not-matching-pattern"
+actors:
+  s: { uses: server }
+steps:
+  - s: start
+outcomes:
+  correct: {}

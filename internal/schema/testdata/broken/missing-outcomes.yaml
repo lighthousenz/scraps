@@ -1,0 +1,6 @@
+id: NO-OUTCOMES
+title: Missing outcomes
+actors:
+  s: { uses: server }
+steps:
+  - s: start
