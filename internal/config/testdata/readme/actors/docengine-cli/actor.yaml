@@ -1,0 +1,6 @@
+name: docengine-cli
+protocol: 1
+run: node ./main.mjs
+
+operations:
+  convert: { params: { input: { type: string }, output: { type: string } }, artefact: true }

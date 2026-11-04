@@ -1,0 +1,27 @@
+version: 1
+
+subjects:
+  mylib:
+    scheme: semver
+    resolve: { env: MYLIB_VERSION }
+  platform:
+    scheme: exact
+    resolve: { value: "linux" }
+
+links:
+  ticket:
+    pattern: '^PROJ-\d+$'
+    url: https://example.com/issue/{value}
+    required: true
+
+actors:
+  server: ./actors/actor-a
+  client: ./actors/actor-b
+
+checkers:
+  - ./checkers/checker-a
+  - ./checkers/checker-b
+
+defaults:
+  step-timeout: 10s
+  ready-timeout: 30s

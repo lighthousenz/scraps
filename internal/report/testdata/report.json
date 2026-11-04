@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "scraps": "1.4.0",
+  "seed": 81723,
+  "subjects": {
+    "docengine": "2.31.0"
+  },
+  "results": [
+    {
+      "id": "DOC-0017",
+      "title": "Table cell merge loses borders",
+      "links": {
+        "ticket": {
+          "value": "ENG-3901",
+          "url": "https://linear.app/acme/issue/ENG-3901"
+        }
+      },
+      "tags": [
+        "tables"
+      ],
+      "expected": "correct",
+      "actual": "correct",
+      "verdict": "as-expected",
+      "matched-history": 0,
+      "duration-ms": 800,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0017/"
+    },
+    {
+      "id": "DOC-0042",
+      "title": "Concurrent inserts drop a paragraph",
+      "links": {
+        "ticket": {
+          "value": "ENG-3901",
+          "url": "https://linear.app/acme/issue/ENG-3901"
+        },
+        "upstream": {
+          "value": "acme/docengine#1234",
+          "url": "https://github.com/acme/docengine/issues/1234"
+        }
+      },
+      "tags": [
+        "collab",
+        "lists"
+      ],
+      "expected": "drops-one",
+      "actual": "drops-one",
+      "verdict": "as-expected",
+      "matched-history": 1,
+      "duration-ms": 1912,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0042/"
+    },
+    {
+      "id": "DOC-0051",
+      "title": "Tracked change survives reject-all",
+      "expected": "correct",
+      "actual": "keeps-insertion",
+      "verdict": "regressed",
+      "matched-history": -1,
+      "duration-ms": 1200,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0051/"
+    },
+    {
+      "id": "DOC-0060",
+      "title": "Fixed bug",
+      "expected": "drops-one",
+      "actual": "correct",
+      "verdict": "fixed",
+      "matched-history": 0,
+      "duration-ms": 500,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0060/"
+    },
+    {
+      "id": "DOC-0070",
+      "title": "Changed failure mode",
+      "expected": "drops-one",
+      "actual": "duplicates",
+      "verdict": "changed",
+      "matched-history": 0,
+      "duration-ms": 600,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0070/"
+    },
+    {
+      "id": "DOC-0080",
+      "title": "Overlapping outcomes",
+      "expected": "correct",
+      "actual": "",
+      "verdict": "unrecognised",
+      "matched-history": 0,
+      "duration-ms": 700,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0080/",
+      "overlapping": [
+        "correct",
+        "shouts"
+      ]
+    },
+    {
+      "id": "DOC-0090",
+      "title": "Actor crashed",
+      "expected": "correct",
+      "actual": "",
+      "verdict": "broken",
+      "matched-history": 0,
+      "duration-ms": 300,
+      "artefacts": ".scraps/runs/2026-11-02T09-14-03Z/DOC-0090/",
+      "reason": "actor alice: protocol violation: non-JSON on stdout"
+    }
+  ]
+}

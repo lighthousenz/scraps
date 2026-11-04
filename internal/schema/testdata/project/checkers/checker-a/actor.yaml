@@ -1,0 +1,8 @@
+name: checker-a
+role: checker
+protocol: 1
+run: echo checker-a
+
+operations:
+  has-text: { params: { texts: { type: array, items: { type: string } } } }
+  word-count: { params: { equals: { type: integer } } }

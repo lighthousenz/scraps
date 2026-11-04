@@ -1,0 +1,29 @@
+version: 1
+
+subjects:
+  docengine:
+    scheme: semver
+    resolve: { env: DOCENGINE_VERSION }
+
+links:
+  ticket:
+    pattern: '^ENG-\d+$'
+    url: https://linear.app/acme/issue/{value}
+    required: true
+  upstream:
+    pattern: '^(?P<repo>[\w.-]+/[\w.-]+)#(?P<n>\d+)$'
+    url: https://github.com/{repo}/issues/{n}
+    required-when: { expects-not: correct }
+
+actors:
+  collab-server: ./actors/collab-server
+  editor:        ./actors/editor
+  docengine-cli: ./actors/docengine-cli
+
+checkers:
+  - ./checkers/docx-checker
+
+defaults:
+  step-timeout: 10s
+  ready-timeout: 30s
+  fail-on: [regressed, changed, unrecognised, broken, fixed]

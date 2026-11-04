@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant server
+  participant alice
+  participant bob
+  participant carol
+  Note over alice,bob: pause-sync
+  alice->>alice: insert-paragraph("start", "alpha")
+  bob->>bob: insert-paragraph("start", "beta")
+  Note over alice,bob: resume-sync
+  Note over alice,bob: await converged
+  Note over server,bob: stop (alice, bob, then server)
+  server->>server: start
+  carol->>carol: start
+  carol->>carol: snapshot → final

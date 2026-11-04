@@ -1,0 +1,17 @@
+version: 1
+
+subjects:
+  yjs:
+    scheme: semver
+    resolve: { env: YJS_VERSION }
+
+actors:
+  collab-server: ../actors/collab-server
+  editor:        ../actors/editor
+
+checkers:
+  - ../actors/paragraphs-checker
+
+defaults:
+  step-timeout: 10s
+  ready-timeout: 30s

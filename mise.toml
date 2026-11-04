@@ -9,6 +9,7 @@ min_version = "2026.10.20"
 [tools]
 go = "1.27.3"
 golangci-lint = "2.15.0"
+goreleaser = "2.19.0"
 
 [bootstrap.hooks.post-tools]
 run = "mise exec -- go version"
@@ -29,3 +30,47 @@ hint = "Run `mise bootstrap`."
 description = "golangci-lint is installed"
 run = "golangci-lint version"
 hint = "Run `mise bootstrap`."
+
+[doctor.checks.goreleaser]
+description = "goreleaser is installed"
+run = "goreleaser --version"
+hint = "Run `mise bootstrap`."
+
+# Build tasks — see AGENTS.md "Build and test".
+
+[tasks.build]
+description = "Build the scraps binary into dist/"
+run = """
+mkdir -p dist
+go build -ldflags "-X main.version=$(git describe --tags --always --dirty)" -o dist/scraps ./cmd/scraps
+"""
+
+[tasks.test]
+description = "Run tests with race detector"
+usage = 'arg "[args]" var=#true double_dash="automatic"'
+run = "go test -race ${usage_args:-./...}"
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.fmt]
+description = "Format code with golangci-lint"
+run = "golangci-lint fmt"
+
+[tasks.check]
+description = "The gate: fmt check, lint, build, test"
+run = """
+golangci-lint fmt --diff && \
+golangci-lint run && \
+mise run build && \
+mise run test
+"""
+
+[tasks."test:e2e"]
+description = "Build and run end-to-end acceptance tests"
+run = "mise run build && go test -tags e2e -count=1 -timeout 30m ./e2e/..."
+
+[tasks."release:check"]
+description = "Validate goreleaser config and run a snapshot build"
+run = "goreleaser check && goreleaser release --snapshot --clean"

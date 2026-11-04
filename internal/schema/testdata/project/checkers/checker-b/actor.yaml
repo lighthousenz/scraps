@@ -1,0 +1,7 @@
+name: checker-b
+role: checker
+protocol: 1
+run: echo checker-b
+
+operations:
+  line-count: { params: { greater-than: { type: integer } } }

@@ -1,0 +1,41 @@
+name: editor
+kind: editor
+description: A Yjs editor client with controllable sync for concurrent editing scenarios.
+protocol: 1
+
+tools:
+  node: "22"
+
+prepare:
+  run: npm ci && npm install --no-save yjs@${{ subjects.yjs }}
+  cache-key: [yjs]
+
+run: node main.mjs
+
+inputs:
+  server: { type: actor, kind: collab-server }
+
+outputs: {}
+
+lifecycle:
+  start:
+    - connect
+  ready: synced
+  stop:
+    - disconnect
+  collect: []
+
+conditions:
+  synced:    { call: status, until: { synced: true }, every: 50ms }
+  converged: { call: digest, all-equal: true, every: 50ms }
+
+operations:
+  connect:          {}
+  disconnect:       {}
+  pause-sync:       {}
+  resume-sync:      {}
+  insert-paragraph: { params: { at: { enum: [start, end] }, text: { type: string } } }
+  delete-paragraph: { params: { index: { type: integer } } }
+  status:           { returns: { synced: { type: boolean } } }
+  digest:           { returns: { value: { type: string } } }
+  snapshot:         { params: { as: { type: string } }, artefact: true }
