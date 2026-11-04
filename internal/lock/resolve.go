@@ -220,10 +220,14 @@ func CopySubtree(src, dst string) error {
 	})
 }
 
+// lfsPointerPrefix is the first line of every Git LFS pointer file.
+// See https://github.com/git-lfs/git-lfs/blob/main/docs/spec.md
+var lfsPointerPrefix = []byte("version https://git-lfs.github.com/spec/v1")
+
 // HashDir computes the content hash of a directory.
 // The hash is sha256 over every regular file, taken in byte order of their
 // slash-separated relative paths. For each file: <relative path>\0<mode>\0<decimal length>\0<bytes>.
-// Mode is "644" or "755". Symlinks and special files are errors.
+// Mode is "644" or "755". Symlinks, special files, and Git LFS pointer files are errors.
 func HashDir(dir string) (string, error) {
 	type entry struct {
 		rel  string
@@ -267,6 +271,10 @@ func HashDir(dir string) (string, error) {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", rel, err)
+		}
+
+		if bytes.HasPrefix(data, lfsPointerPrefix) {
+			return fmt.Errorf("%s is a Git LFS pointer, not the actual file content; the source repository uses Git LFS and scraps does not support LFS-tracked files", rel)
 		}
 
 		entries = append(entries, entry{rel: rel, mode: mode, data: data})

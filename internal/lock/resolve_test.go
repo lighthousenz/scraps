@@ -246,6 +246,27 @@ func TestHashDirRejectsSymlinks(t *testing.T) {
 	}
 }
 
+func TestHashDirRejectsLFSPointers(t *testing.T) {
+	dir := t.TempDir()
+	// A real LFS pointer file.
+	pointer := "version https://git-lfs.github.com/spec/v1\noid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\nsize 12345\n"
+	if err := os.WriteFile(filepath.Join(dir, "large.bin"), []byte(pointer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A normal file alongside — the LFS pointer should be caught before hashing completes.
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := HashDir(dir)
+	if err == nil {
+		t.Fatal("expected error for LFS pointer file")
+	}
+	if !strings.Contains(err.Error(), "Git LFS pointer") {
+		t.Errorf("error = %q, want mention of Git LFS pointer", err)
+	}
+}
+
 func TestCopySubtreeRejectsSymlinks(t *testing.T) {
 	srcDir := t.TempDir()
 	target := filepath.Join(srcDir, "target.txt")
