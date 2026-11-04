@@ -1,0 +1,514 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": ".scraps/schema.json",
+  "title": "Scraps scenario",
+  "description": "Schema for scenario.yaml files, generated from the project's scraps.yaml and actor definitions.",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "actors",
+    "steps",
+    "outcomes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique scenario identifier."
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable title describing the scenario."
+    },
+    "symptom": {
+      "type": "string",
+      "description": "Longer description of the symptom being tested."
+    },
+    "links": {
+      "type": "object",
+      "description": "Scenario links.",
+      "properties": {
+        "ticket": {
+          "type": "string",
+          "pattern": "^PROJ-\\d+$",
+          "description": "Link value matching pattern: ^PROJ-\\d+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Tags for filtering scenarios."
+    },
+    "fixtures": {
+      "type": "object",
+      "description": "Named fixture directories.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "actors": {
+      "type": "object",
+      "description": "Actors participating in this scenario.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "uses"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "uses": {
+            "type": "string",
+            "enum": [
+              "client",
+              "server"
+            ],
+            "description": "Which actor definition this participant uses."
+          },
+          "with": {
+            "type": "object",
+            "description": "Inputs for the actor. The union of all actor definitions' inputs.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "default": "normal"
+              },
+              "port": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "default": 8080
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{\\{"
+                  }
+                ]
+              },
+              "server": {
+                "type": "string",
+                "description": "Actor reference (kind: actor-a)."
+              }
+            },
+            "additionalProperties": true
+          },
+          "start": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "on-demand"
+            ],
+            "description": "When to start the actor: auto (default) or on-demand."
+          }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "description": "The timeline of steps.",
+      "items": {
+        "type": "object",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "additionalProperties": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "start",
+                "stop",
+                "connect",
+                "digest",
+                "disconnect",
+                "health",
+                "listen",
+                "snapshot",
+                "status",
+                "write"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "await": {
+                  "type": "string",
+                  "enum": [
+                    "converged",
+                    "healthy",
+                    "synced"
+                  ],
+                  "description": "Wait for a condition to hold."
+                }
+              },
+              "required": [
+                "await"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "connect": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "connect"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "digest": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "digest"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "disconnect": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "disconnect"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "health": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "health"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "listen": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "listen"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "snapshot": {
+                  "type": "object",
+                  "properties": {
+                    "as": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "snapshot"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "object",
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "status"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "write": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "format": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "write"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "description": "Named outcomes: sets of checks against artefacts.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "step-error": {
+            "type": "object",
+            "description": "Match a step failure.",
+            "properties": {
+              "actor": {
+                "type": "string"
+              },
+              "operation": {
+                "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "matches": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "matches"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": {
+          "type": "object",
+          "properties": {
+            "file-exists": {
+              "type": "string",
+              "description": "Check that a file exists in the artefact directory."
+            },
+            "json": {
+              "type": "object",
+              "description": "Check a JSON value at a path.",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "equals": {}
+              },
+              "required": [
+                "path",
+                "equals"
+              ],
+              "additionalProperties": false
+            },
+            "text": {
+              "type": "object",
+              "description": "Check file text content with a regex.",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "matches": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "file",
+                "matches"
+              ],
+              "additionalProperties": false
+            },
+            "has-text": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "texts": {
+                      "anyOf": [
+                        {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "\\$\\{\\{"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "\\$\\{\\{"
+                    }
+                  ]
+                }
+              ]
+            },
+            "word-count": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "equals": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "\\$\\{\\{"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "\\$\\{\\{"
+                    }
+                  ]
+                }
+              ]
+            },
+            "line-count": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "greater-than": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "\\$\\{\\{"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "\\$\\{\\{"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "minProperties": 1
+        },
+        "minProperties": 1
+      }
+    },
+    "history": {
+      "type": "array",
+      "description": "Version-conditioned expected outcomes, checked in order.",
+      "items": {
+        "type": "object",
+        "required": [
+          "when",
+          "expect"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "when": {
+            "type": "object",
+            "description": "Version conditions that must all match.",
+            "properties": {
+              "mylib": {
+                "type": "string",
+                "description": "Version constraint for subject \"mylib\"."
+              },
+              "platform": {
+                "type": "string",
+                "description": "Version constraint for subject \"platform\"."
+              }
+            },
+            "additionalProperties": false
+          },
+          "expect": {
+            "type": "string",
+            "description": "The outcome expected when all conditions in 'when' match."
+          }
+        }
+      }
+    }
+  }
+}

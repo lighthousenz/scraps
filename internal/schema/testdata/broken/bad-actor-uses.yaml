@@ -1,0 +1,8 @@
+id: BAD-USES
+title: Bad actor uses
+actors:
+  s: { uses: 12345 }
+steps:
+  - s: start
+outcomes:
+  correct: {}

@@ -1,0 +1,24 @@
+name: actor-a
+description: A test server actor.
+protocol: 1
+run: echo server
+
+inputs:
+  port: { type: integer, default: 8080 }
+
+outputs:
+  url: { type: string }
+
+lifecycle:
+  start:
+    - listen
+  ready: healthy
+
+conditions:
+  healthy: { call: health, until: { ok: true }, every: 100ms }
+
+operations:
+  listen: {}
+  health: { returns: { ok: { type: boolean } } }
+  write: { params: { text: { type: string }, format: { type: string } }, artefact: true }
+  snapshot: { params: { as: { type: string } }, artefact: true }

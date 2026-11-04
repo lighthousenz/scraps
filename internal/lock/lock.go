@@ -54,6 +54,15 @@ func Lookup(lf *LockFile, source, projectDir string) (*LockEntry, string, error)
 	return &entry, cacheDir, nil
 }
 
+// MismatchError indicates a lock-file mismatch: a missing source or a hash
+// that does not match the locked value. Callers should exit 2 (invalid config)
+// for these, not 3 (scraps itself failed).
+type MismatchError struct {
+	Message string
+}
+
+func (e *MismatchError) Error() string { return e.Message }
+
 // IsGitHubSource reports whether source is a github: reference.
 func IsGitHubSource(source string) bool {
 	return strings.HasPrefix(source, "github:")

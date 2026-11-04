@@ -37,8 +37,8 @@ func TestMain(m *testing.M) {
 
 func TestSubcommandStubsExit3(t *testing.T) {
 	bin := builtBin
-	// Only lock and schema are still stubs.
-	cmds := []string{"lock", "schema"}
+	// All subcommands are now implemented; no stubs remain.
+	cmds := []string{}
 	for _, name := range cmds {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), bin, name)

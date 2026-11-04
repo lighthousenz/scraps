@@ -1,0 +1,7 @@
+title: Missing id field
+actors:
+  s: { uses: server }
+steps:
+  - s: start
+outcomes:
+  correct: {}
