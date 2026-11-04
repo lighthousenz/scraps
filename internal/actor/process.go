@@ -211,6 +211,11 @@ func (p *Process) Stop(ctx context.Context, shutdownTimeout, termTimeout time.Du
 
 	select {
 	case <-p.exited:
+	case <-time.After(termTimeout):
+		// A detached child may hold stdout open after the actor's process
+		// group has been killed. Bound this wait so Stop always returns.
+		_ = p.stdinPipe.Close()
+		return errors.New("actor did not exit after SIGKILL (detached child may hold stdout)")
 	case <-ctx.Done():
 		return fmt.Errorf("actor did not exit after SIGKILL: %w", ctx.Err())
 	}

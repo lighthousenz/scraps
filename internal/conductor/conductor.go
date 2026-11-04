@@ -150,6 +150,12 @@ func Run(ctx context.Context, cfg *RunConfig) (*RunResult, error) {
 		default:
 		}
 
+		// Restart any checker whose client latched broken from a previous
+		// scenario, so each scenario gets a clean checker state.
+		if err := restartBrokenCheckers(ctx, cfg, checkers); err != nil {
+			return nil, fmt.Errorf("restart checkers: %w", err)
+		}
+
 		result, err := runScenario(ctx, cfg, ls, checkers)
 		results[i] = result
 		if err != nil {
@@ -211,6 +217,15 @@ func RunParallel(ctx context.Context, cfg *RunConfig, parallel int) (*RunResult,
 			// Each parallel scenario gets its own checkers for isolation.
 			checkers, err := prepareCheckers(ctx, cfg)
 			if err != nil {
+				// A missing mise is a harness error, not a per-scenario broken.
+				if errors.Is(err, actor.ErrMiseNotFound) {
+					mu.Lock()
+					if runErr == nil {
+						runErr = fmt.Errorf("prepare checkers: %w", err)
+					}
+					mu.Unlock()
+					return
+				}
 				mu.Lock()
 				results[idx] = brokenResult(ls.Scenario, cfg, time.Now(), fmt.Sprintf("prepare checkers: %s", err))
 				mu.Unlock()
@@ -447,7 +462,10 @@ func (sr *scenarioRunner) startActor(ctx context.Context, name string) error {
 
 	// Resolve inputs for this actor.
 	inputs := sr.resolveInputs(name)
-	if sr.broken {
+	sr.mu.Lock()
+	isBroken := sr.broken
+	sr.mu.Unlock()
+	if isBroken {
 		return fmt.Errorf("resolve inputs for %q: broken", name)
 	}
 
@@ -478,7 +496,7 @@ func (sr *scenarioRunner) startActor(ctx context.Context, name string) error {
 	sr.updateActorOutputs(name, ah.outputs)
 
 	// Run lifecycle.start operations with actor-scoped inputs.
-	actorCtx := sr.actorExprContext(inputs)
+	actorCtx := sr.actorExprContext(name, inputs)
 	for _, entry := range ah.def.Lifecycle.Start {
 		for opName, rawParams := range entry {
 			params, err := sr.resolveParamsWithCtx(rawParams, actorCtx)
@@ -594,7 +612,7 @@ func (sr *scenarioRunner) stopActor(ctx context.Context, name string) {
 
 	// Build a per-actor expression context with inputs for lifecycle resolution.
 	actorInputs := sr.resolveInputs(name)
-	actorCtx := sr.actorExprContext(actorInputs)
+	actorCtx := sr.actorExprContext(name, actorInputs)
 
 	// Run lifecycle.stop operations.
 	for _, entry := range ah.def.Lifecycle.Stop {
@@ -660,7 +678,19 @@ func (sr *scenarioRunner) handleAwait(ctx context.Context, step model.Step) {
 	}
 
 	if err := sr.pollCondition(ctx, firstTarget, condDef, step.Targets, sr.stepTimeout()); err != nil {
-		sr.setBroken(fmt.Sprintf("await %q: %s", condName, err))
+		// A protocol BrokenError means the actor is genuinely broken.
+		// A timeout or context cancellation is a step failure that outcomes
+		// can match, per the README: await "fails the step at the timeout".
+		var be *protocol.BrokenError
+		if errors.As(err, &be) {
+			sr.setBroken(fmt.Sprintf("await %q: %s", condName, err))
+		} else {
+			sr.stepError = &verdict.StepFailure{
+				Actor:     firstTarget,
+				Operation: "await:" + condName,
+				Message:   err.Error(),
+			}
+		}
 	}
 }
 
@@ -725,9 +755,16 @@ func (sr *scenarioRunner) checkCondition(ctx context.Context, condDef model.Cond
 		if len(results) < 2 {
 			return true, nil
 		}
-		first := string(results[0])
+		var first any
+		if err := json.Unmarshal(results[0], &first); err != nil {
+			return false, nil
+		}
 		for _, r := range results[1:] {
-			if string(r) != first {
+			var v any
+			if err := json.Unmarshal(r, &v); err != nil {
+				return false, nil
+			}
+			if !jsonDeepEqual(first, v) {
 				return false, nil
 			}
 		}
@@ -798,7 +835,19 @@ func (sr *scenarioRunner) handleOperation(ctx context.Context, target, op string
 			return
 		}
 		if errors.As(err, &brokenErr) {
-			sr.setBroken(fmt.Sprintf("operation %s.%s: %s", target, op, brokenErr.Reason))
+			// If the process exited (stdout closed / crash), treat as a
+			// step failure so outcomes can match on it. A 1001 or protocol
+			// violation while the process is still alive stays broken.
+			select {
+			case <-ah.process.Exited():
+				sr.stepError = &verdict.StepFailure{
+					Actor:     target,
+					Operation: op,
+					Message:   fmt.Sprintf("actor crashed: %s", brokenErr.Reason),
+				}
+			default:
+				sr.setBroken(fmt.Sprintf("operation %s.%s: %s", target, op, brokenErr.Reason))
+			}
 			return
 		}
 		sr.setBroken(fmt.Sprintf("operation %s.%s: %s", target, op, err))
@@ -830,6 +879,11 @@ func (sr *scenarioRunner) recordArtefactResult(actorName string, params map[stri
 	}
 
 	sr.mu.Lock()
+	if prev, exists := sr.artefactActor[asName]; exists && prev != actorName {
+		sr.mu.Unlock()
+		sr.setBroken(fmt.Sprintf("artefact %q produced by both %q and %q", asName, prev, actorName))
+		return
+	}
 	sr.artefactFiles[asName] = result.Files
 	sr.artefactActor[asName] = actorName
 	sr.mu.Unlock()
@@ -939,7 +993,13 @@ func (sr *scenarioRunner) checkOutcome(ctx context.Context, name string, outcome
 
 		// Determine the artefact.
 		artName := check.Artefact
-		actorName := sr.artefactActor[artName]
+		actorName, recorded := sr.artefactActor[artName]
+		if !recorded {
+			// The artefact was never produced (e.g. a step failed before the
+			// artefact operation ran). Treat as not matched rather than
+			// resolving paths against the process's cwd.
+			return false
+		}
 		files := sr.artefactFiles[artName]
 
 		ah := sr.actors[actorName]
@@ -1125,7 +1185,7 @@ func (sr *scenarioRunner) resolveInputs(name string) map[string]any {
 
 	// Snapshot the expression context under the lock so concurrent goroutines
 	// in the same dependency layer don't race on map reads/writes.
-	ectx := sr.actorExprContext(nil)
+	ectx := sr.actorExprContext(name, nil)
 
 	for inputName, inputDef := range ah.def.Inputs {
 		rawVal, ok := sa.With[inputName]
@@ -1210,9 +1270,11 @@ func (sr *scenarioRunner) resolveValue(v any) (any, error) {
 }
 
 // actorExprContext returns a snapshot of the shared expression context with
-// per-actor Inputs set. This is safe for concurrent use because it copies the
-// shared maps rather than mutating sr.exprCtx.
-func (sr *scenarioRunner) actorExprContext(inputs map[string]any) *expr.Context {
+// per-actor Inputs and Run paths set. This is safe for concurrent use because
+// it copies the shared maps rather than mutating sr.exprCtx.
+// If actorName is non-empty, run.workdir and run.artefacts are set to the
+// actor's per-process paths (matching SCRAPS_WORKDIR/SCRAPS_ARTEFACTS).
+func (sr *scenarioRunner) actorExprContext(actorName string, inputs map[string]any) *expr.Context {
 	sr.mu.Lock()
 	// Snapshot the shared actors map so concurrent writes don't race.
 	actorsCopy := make(map[string]map[string]any, len(sr.exprCtx.Actors))
@@ -1220,12 +1282,25 @@ func (sr *scenarioRunner) actorExprContext(inputs map[string]any) *expr.Context 
 		actorsCopy[k] = v
 	}
 	sr.mu.Unlock()
+
+	// Copy Run so per-actor overrides don't mutate the shared map.
+	runCopy := make(map[string]any, len(sr.exprCtx.Run))
+	for k, v := range sr.exprCtx.Run {
+		runCopy[k] = v
+	}
+	if actorName != "" {
+		if ah := sr.actors[actorName]; ah != nil {
+			runCopy["workdir"] = ah.workdir
+			runCopy["artefacts"] = ah.artefacts
+		}
+	}
+
 	return &expr.Context{
 		Fixtures: sr.exprCtx.Fixtures,
 		Subjects: sr.exprCtx.Subjects,
 		Actors:   actorsCopy,
 		Inputs:   inputs,
-		Run:      sr.exprCtx.Run,
+		Run:      runCopy,
 	}
 }
 
@@ -1501,6 +1576,76 @@ func shutdownCheckers(ctx context.Context, checkers map[string]*checkerHandle) {
 			_ = ch.process.Stop(ctx, shutdownTimeout, termTimeout)
 		}
 	}
+}
+
+// restartBrokenCheckers replaces any checker whose client has latched broken
+// with a fresh process, so a failure in one scenario does not infect the next.
+func restartBrokenCheckers(ctx context.Context, cfg *RunConfig, checkers map[string]*checkerHandle) error {
+	for name, ch := range checkers {
+		if ch.process == nil || ch.process.Client().IsBroken() == nil {
+			continue
+		}
+
+		// Stop the broken process.
+		_ = ch.process.Stop(ctx, shutdownTimeout, termTimeout)
+
+		source := cfg.Project.CheckerSources[name]
+		sourceDir := resolveCheckerSource(cfg.Project, source)
+		if sourceDir == "" {
+			return fmt.Errorf("checker %q: cannot resolve source", name)
+		}
+
+		prepResult, err := actor.Prepare(ctx, &actor.PrepareConfig{
+			SourceDir:        sourceDir,
+			CacheDir:         cfg.CacheDir,
+			Tools:            ch.def.Tools,
+			PrepareRun:       prepareCmdFromDef(ch.def),
+			CacheKeySubjects: prepareCacheKey(ch.def),
+			Subjects:         cfg.Subjects,
+			Resolver:         makeSubjectResolver(cfg.Subjects),
+		})
+		if err != nil {
+			return fmt.Errorf("prepare checker %q: %w", name, err)
+		}
+
+		tmpDir, err := os.MkdirTemp("", "scraps-checker-*")
+		if err != nil {
+			return fmt.Errorf("checker tmpdir: %w", err)
+		}
+		logPath := filepath.Join(tmpDir, name+".log")
+
+		proc, err := actor.Start(ctx, &actor.StartConfig{
+			Tools:     ch.def.Tools,
+			Run:       ch.def.Run,
+			Dir:       prepResult.Dir,
+			Workdir:   tmpDir,
+			Artefacts: tmpDir,
+			LogPath:   logPath,
+		})
+		if err != nil {
+			return fmt.Errorf("start checker %q: %w", name, err)
+		}
+
+		initCtx, initCancel := context.WithTimeout(ctx, defaultStepTimeout)
+		_, err = proc.Client().Initialize(initCtx, &protocol.InitializeParams{
+			Protocol:  protocol.ProtocolVersion,
+			Name:      name,
+			Kind:      ch.def.Kind,
+			Inputs:    make(map[string]any),
+			Subjects:  cfg.Subjects,
+			Seed:      cfg.Seed,
+			Workdir:   tmpDir,
+			Artefacts: tmpDir,
+		})
+		initCancel()
+		if err != nil {
+			_ = proc.Stop(ctx, shutdownTimeout, termTimeout)
+			return fmt.Errorf("initialize checker %q: %w", name, err)
+		}
+
+		ch.process = proc
+	}
+	return nil
 }
 
 func brokenResult(scenario model.Scenario, cfg *RunConfig, start time.Time, reason string) model.ScenarioResult {
