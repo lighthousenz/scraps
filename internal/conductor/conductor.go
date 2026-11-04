@@ -687,8 +687,8 @@ func (sr *scenarioRunner) handleAwait(ctx context.Context, step model.Step) {
 		} else {
 			sr.stepError = &verdict.StepFailure{
 				Actor:     firstTarget,
-				Operation: "await:" + condName,
-				Message:   err.Error(),
+				Operation: "await",
+				Message:   fmt.Sprintf("%s: %s", condName, err.Error()),
 			}
 		}
 	}
@@ -835,17 +835,17 @@ func (sr *scenarioRunner) handleOperation(ctx context.Context, target, op string
 			return
 		}
 		if errors.As(err, &brokenErr) {
-			// If the process exited (stdout closed / crash), treat as a
-			// step failure so outcomes can match on it. A 1001 or protocol
-			// violation while the process is still alive stays broken.
-			select {
-			case <-ah.process.Exited():
+			// "stdout closed" means the actor process died mid-call — treat
+			// as a step failure so outcomes can match on the crash. Any other
+			// reason (1001, protocol violation, call timeout) means the
+			// process is still alive but misbehaving — that stays broken.
+			if brokenErr.Reason == "stdout closed" {
 				sr.stepError = &verdict.StepFailure{
 					Actor:     target,
 					Operation: op,
 					Message:   fmt.Sprintf("actor crashed: %s", brokenErr.Reason),
 				}
-			default:
+			} else {
 				sr.setBroken(fmt.Sprintf("operation %s.%s: %s", target, op, brokenErr.Reason))
 			}
 			return
@@ -879,11 +879,6 @@ func (sr *scenarioRunner) recordArtefactResult(actorName string, params map[stri
 	}
 
 	sr.mu.Lock()
-	if prev, exists := sr.artefactActor[asName]; exists && prev != actorName {
-		sr.mu.Unlock()
-		sr.setBroken(fmt.Sprintf("artefact %q produced by both %q and %q", asName, prev, actorName))
-		return
-	}
 	sr.artefactFiles[asName] = result.Files
 	sr.artefactActor[asName] = actorName
 	sr.mu.Unlock()
