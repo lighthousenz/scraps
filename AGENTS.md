@@ -99,6 +99,10 @@ testdata/          fixtures for Go tests; synthetic only
   `context.Context`.
 - **Dependencies:** prefer the standard library. A new module dependency needs a
   one-line justification in the PR description.
+- **Linter gotchas:** `.golangci.yml` enables `noctx` and `contextcheck` — use
+  `exec.CommandContext` (not `exec.Command`) everywhere, including tests. It also
+  enables `errorlint` — use `errors.As`/`errors.Is` instead of type assertions or
+  direct equality checks on errors.
 
 ## Constraints
 
