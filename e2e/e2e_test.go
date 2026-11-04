@@ -380,21 +380,22 @@ func TestCollabDeterminism(t *testing.T) {
 
 	seeds := []string{"11111", "22222", "33333", "44444", "55555"}
 
-	// Run the first seed, then keep the report for comparison.
+	// Run the first seed to establish the expected verdict for each scenario.
 	firstTmp := copyCollabProject(t)
 	_, stderr, exitCode := runScraps(t, firstTmp,
-		"run", "--subject", "yjs=13.6.27", "--seed", seeds[0], "--keep")
+		"run", "--subject", "yjs=13.6.27", "--seed", seeds[0])
 	if exitCode != 0 {
 		t.Fatalf("first run (seed=%s) exit code: got %d, want 0\nstderr: %s",
 			seeds[0], exitCode, stderr)
 	}
 	firstReport := readReport(t, firstTmp)
 
+	// Verify that different seeds produce the same verdicts.
 	for _, seed := range seeds[1:] {
-		t.Run("seed="+seed, func(t *testing.T) {
+		t.Run("verdict/seed="+seed, func(t *testing.T) {
 			tmp := copyCollabProject(t)
 			_, stderr, exitCode := runScraps(t, tmp,
-				"run", "--subject", "yjs=13.6.27", "--seed", seed, "--keep")
+				"run", "--subject", "yjs=13.6.27", "--seed", seed)
 			if exitCode != 0 {
 				t.Fatalf("exit code: got %d, want 0\nstderr: %s", exitCode, stderr)
 			}
@@ -411,16 +412,39 @@ func TestCollabDeterminism(t *testing.T) {
 						r.ID, seeds[0], fr.Verdict, seed, r.Verdict)
 				}
 			}
+		})
+	}
 
-			// Compare snapshot artefacts byte-for-byte.
-			compareSnapshotArtefacts(t, firstTmp, firstReport, tmp, rpt)
+	// Verify same-seed determinism: run each seed twice and compare artefacts
+	// byte-for-byte. Different seeds can legitimately produce different artefact
+	// content (e.g. Yjs clientID ordering affects concurrent insert order), so
+	// artefact comparison is only valid within the same seed.
+	for _, seed := range seeds {
+		t.Run("artefacts/seed="+seed, func(t *testing.T) {
+			runA := copyCollabProject(t)
+			_, stderr, exitCode := runScraps(t, runA,
+				"run", "--subject", "yjs=13.6.27", "--seed", seed, "--keep")
+			if exitCode != 0 {
+				t.Fatalf("run A exit code: got %d, want 0\nstderr: %s", exitCode, stderr)
+			}
+			rptA := readReport(t, runA)
+
+			runB := copyCollabProject(t)
+			_, stderr, exitCode = runScraps(t, runB,
+				"run", "--subject", "yjs=13.6.27", "--seed", seed, "--keep")
+			if exitCode != 0 {
+				t.Fatalf("run B exit code: got %d, want 0\nstderr: %s", exitCode, stderr)
+			}
+			rptB := readReport(t, runB)
+
+			compareSnapshotArtefacts(t, rptA, rptB)
 		})
 	}
 }
 
 // compareSnapshotArtefacts compares snapshot artefact files between two runs.
 // Artefacts paths in the report are absolute, so they are used directly.
-func compareSnapshotArtefacts(t *testing.T, _ string, rptA runReport, _ string, rptB runReport) {
+func compareSnapshotArtefacts(t *testing.T, rptA runReport, rptB runReport) {
 	t.Helper()
 	compared := 0
 	for _, ra := range rptA.Results {
