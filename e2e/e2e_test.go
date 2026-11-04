@@ -11,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -292,8 +294,14 @@ func TestVerdictCoverage(t *testing.T) {
 				if exp.reason != "" && !strings.Contains(strings.ToLower(r.Reason), exp.reason) {
 					t.Errorf("%s: reason = %q, want substring %q", id, r.Reason, exp.reason)
 				}
-				if len(exp.overlapping) > 0 && len(r.Overlapping) == 0 {
-					t.Errorf("%s: expected overlapping %v, got none", id, exp.overlapping)
+				if len(exp.overlapping) > 0 {
+					got := slices.Clone(r.Overlapping)
+					want := slices.Clone(exp.overlapping)
+					slices.Sort(got)
+					slices.Sort(want)
+					if !slices.Equal(got, want) {
+						t.Errorf("%s: overlapping = %v, want %v", id, r.Overlapping, exp.overlapping)
+					}
 				}
 			}
 		})
@@ -411,42 +419,62 @@ func TestCollabDeterminism(t *testing.T) {
 }
 
 // compareSnapshotArtefacts compares snapshot artefact files between two runs.
-func compareSnapshotArtefacts(t *testing.T, dirA string, rptA runReport, dirB string, rptB runReport) {
+// Artefacts paths in the report are absolute, so they are used directly.
+func compareSnapshotArtefacts(t *testing.T, _ string, rptA runReport, _ string, rptB runReport) {
 	t.Helper()
+	compared := 0
 	for _, ra := range rptA.Results {
 		rb, ok := findResult(rptB, ra.ID)
 		if !ok || ra.Artefacts == "" || rb.Artefacts == "" {
 			continue
 		}
-		aArtDir := filepath.Join(dirA, ra.Artefacts)
-		bArtDir := filepath.Join(dirB, rb.Artefacts)
-		if _, err := os.Stat(aArtDir); os.IsNotExist(err) {
+		aArtDir := ra.Artefacts
+		bArtDir := rb.Artefacts
+		if _, err := os.Stat(aArtDir); err != nil {
+			t.Errorf("artefact dir for %s (run A) missing: %v", ra.ID, err)
 			continue
 		}
-		_ = filepath.Walk(aArtDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+		if _, err := os.Stat(bArtDir); err != nil {
+			t.Errorf("artefact dir for %s (run B) missing: %v", ra.ID, err)
+			continue
+		}
+		err := filepath.Walk(aArtDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
 				return err
 			}
-			rel, _ := filepath.Rel(aArtDir, path)
+			if info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(aArtDir, path)
+			if err != nil {
+				return fmt.Errorf("rel %s: %w", path, err)
+			}
 			// Only compare snapshot JSON files.
 			if !strings.HasSuffix(rel, ".json") {
 				return nil
 			}
 			aData, err := os.ReadFile(path)
 			if err != nil {
-				return nil
+				return fmt.Errorf("read %s: %w", path, err)
 			}
 			bPath := filepath.Join(bArtDir, rel)
 			bData, err := os.ReadFile(bPath)
 			if err != nil {
-				t.Errorf("artefact %s: exists in run A but not B", rel)
+				t.Errorf("artefact %s: exists in run A but not B: %v", rel, err)
 				return nil
 			}
 			if !bytes.Equal(aData, bData) {
-				t.Errorf("artefact %s: differs between runs\nA: %s\nB: %s", rel, aData, bData)
+				t.Errorf("artefact %s: differs between runs", rel)
 			}
+			compared++
 			return nil
 		})
+		if err != nil {
+			t.Errorf("walking artefacts for %s: %v", ra.ID, err)
+		}
+	}
+	if compared == 0 {
+		t.Error("no artefact files were compared; expected at least one JSON snapshot")
 	}
 }
 
@@ -523,8 +551,9 @@ history: []
 	if exitCode != 2 {
 		t.Errorf("exit code: got %d, want 2\nstderr: %s", exitCode, stderr)
 	}
-	if !strings.Contains(stderr, ":") {
-		t.Errorf("expected path:line:col in error output, got: %s", stderr)
+	locPattern := regexp.MustCompile(`\.yaml:\d+:\d+`)
+	if !locPattern.MatchString(stderr) {
+		t.Errorf("expected path:line:col (.yaml:N:N) in error output, got: %s", stderr)
 	}
 }
 

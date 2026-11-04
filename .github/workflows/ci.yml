@@ -32,4 +32,6 @@ jobs:
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
         with:
           version: "2026.10.20"
+      - name: Pre-install actor tools
+        run: mise install python@3.13 node@22
       - run: mise run test:e2e
