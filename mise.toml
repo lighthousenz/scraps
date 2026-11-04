@@ -67,6 +67,10 @@ mise run build && \
 mise run test
 """
 
+[tasks."test:e2e"]
+description = "Build and run end-to-end acceptance tests"
+run = "mise run build && go test -tags e2e -count=1 -timeout 30m ./e2e/..."
+
 [tasks."release:check"]
 description = "Validate goreleaser config and run a snapshot build"
 run = "goreleaser check && goreleaser release --snapshot --clean"
