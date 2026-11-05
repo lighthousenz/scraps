@@ -1,0 +1,10 @@
+# yamlfmt configuration — YAML format checks for scraps
+# Preserves blank-line structure so workflow and config files keep their
+# existing readability without a mass reformat.
+
+formatter:
+  type: basic
+  retain_line_breaks_single: true
+  include_document_start: false
+  trim_trailing_whitespace: true
+  eof_newline: true
