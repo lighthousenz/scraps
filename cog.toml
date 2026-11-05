@@ -1,0 +1,7 @@
+tag_prefix = "v"
+ignore_merge_commits = true
+from_latest_tag = true
+
+[commit_types]
+perf = { changelog_title = "Performance", bump_patch = true }
+retro = { changelog_title = "Retrospectives", omit_from_changelog = true }
