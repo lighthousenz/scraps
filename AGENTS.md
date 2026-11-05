@@ -26,8 +26,9 @@ the bootstrap entry that provides it, and the doctor check that verifies it.
 
 `mise bootstrap` also installs lefthook git hooks. They run the cheap checks before
 each commit: `cog verify` on the commit message, `golangci-lint fmt --diff` on staged
-`.go` files, `rumdl` on staged `.md` files, `yamlfmt -lint` on staged `.yml`/`.yaml`
-files (excluding `testdata/`), and `mise fmt --check` on `mise.toml`. Set `LEFTHOOK=0`
+`.go` files, `rumdl` on staged `.md` files (excluding `testdata/`), `yamlfmt -lint` on
+staged `.yml`/`.yaml` files (excluding `testdata/`), and `mise fmt --check` on
+`mise.toml`. Set `LEFTHOOK=0`
 to skip hooks in an emergency.
 
 ## Build and test

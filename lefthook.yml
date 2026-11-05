@@ -15,11 +15,16 @@ pre-commit:
 
     - name: markdown-fmt
       glob: "*.md"
+      exclude:
+        - "testdata/**"
+        - "**/testdata/**"
       run: mise x -- rumdl fmt --check {staged_files}
 
     - name: yaml-fmt
       glob: "*.{yml,yaml}"
-      exclude: "testdata/**"
+      exclude:
+        - "testdata/**"
+        - "**/testdata/**"
       run: mise x -- yamlfmt -lint {staged_files}
 
     - name: mise-toml-fmt
