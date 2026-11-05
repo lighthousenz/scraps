@@ -1,7 +1,7 @@
 name: commits
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -12,7 +12,6 @@ jobs:
     env:
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -21,27 +20,13 @@ jobs:
         with:
           version: "2026.10.20"
       - name: Check conventional commits
-        run: |
+        run: |-
           echo "Checking commits in ${PR_BASE_SHA}..${PR_HEAD_SHA}"
           if ! cog check "${PR_BASE_SHA}..${PR_HEAD_SHA}"; then
             echo ""
             echo "::error::Some commits do not follow the conventional commit format."
             echo ""
             echo "A valid subject looks like:"
-            echo "  <type>(<optional scope>): <description>"
-            echo ""
-            echo "Allowed types: feat fix docs style refactor perf test build ci chore revert retro"
-            exit 1
-          fi
-      - name: Check PR title
-        run: |
-          echo "Checking PR title: ${PR_TITLE}"
-          if ! cog verify "${PR_TITLE}"; then
-            echo ""
-            echo "::error::PR title is not a valid conventional commit subject."
-            echo "GitHub uses the PR title as the squash-merge commit subject."
-            echo ""
-            echo "A valid title looks like:"
             echo "  <type>(<optional scope>): <description>"
             echo ""
             echo "Allowed types: feat fix docs style refactor perf test build ci chore revert retro"

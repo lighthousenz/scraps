@@ -94,8 +94,8 @@ testdata/          fixtures for Go tests; synthetic only
 
 - **Commits:** conventional, lowercase subject: `feat(verdict): add changed verdict`.
   One logical change per commit. Checked by cocogitto (`cog`); the `retro` type is
-  allowed. Every commit in a PR must be conventional. The CI workflow also validates
-  the PR title, because GitHub uses it as the squash-merge subject.
+  allowed. PRs land as merge commits, so every commit in a PR must be conventional;
+  merge commits and PR titles are not checked.
 - **Branches:** if your branch was cut for you, do not rename or re-target it.
 - **Comments:** explain why, not what. One line where one line does. The code should
   carry the rest.
