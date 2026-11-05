@@ -91,7 +91,9 @@ testdata/          fixtures for Go tests; synthetic only
 ## Conventions
 
 - **Commits:** conventional, lowercase subject: `feat(verdict): add changed verdict`.
-  One logical change per commit.
+  One logical change per commit. Checked by cocogitto (`cog`); the `retro` type is
+  allowed. Every non-merge commit in a PR must be conventional, because PRs are merged
+  with merge commits.
 - **Branches:** if your branch was cut for you, do not rename or re-target it.
 - **Comments:** explain why, not what. One line where one line does. The code should
   carry the rest.
