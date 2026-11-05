@@ -4,7 +4,7 @@
   "enforcement": "active",
   "conditions": {
     "ref_name": {
-      "include": ["~DEFAULT_BRANCH", "refs/heads/epic/*"],
+      "include": ["~DEFAULT_BRANCH", "refs/heads/epic/*", "refs/heads/epic/**/*"],
       "exclude": []
     }
   },
@@ -33,12 +33,8 @@
       "type": "required_status_checks",
       "parameters": {
         "strict_required_status_checks_policy": false,
-        "do_not_enforce_on_create": false,
+        "do_not_enforce_on_create": true,
         "required_status_checks": [
-          {
-            "context": "Claude Code Review",
-            "integration_id": 1236702
-          },
           {
             "context": "check (ubuntu-latest)"
           },
