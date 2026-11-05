@@ -5,19 +5,19 @@ fixtures:
   doc: ../../fixtures/
 
 actors:
-  server: { uses: collab-server, with: { document: "${{ fixtures.doc }}" } }
-  alice:  { uses: editor, with: { server: server } }
-  carol:  { uses: editor, with: { server: server }, start: on-demand }
+  server: {uses: collab-server, with: {document: "${{ fixtures.doc }}"}}
+  alice: {uses: editor, with: {server: server}}
+  carol: {uses: editor, with: {server: server}, start: on-demand}
 
 steps:
-  - alice: { insert-paragraph: { at: start, text: persisted } }
+  - alice: {insert-paragraph: {at: start, text: persisted}}
   - server: stop
   - server: start
   - carol: start
-  - carol: { snapshot: { as: final } }
+  - carol: {snapshot: {as: final}}
 
 outcomes:
   correct:
-    final: { has-paragraphs: [persisted] }
+    final: {has-paragraphs: [persisted]}
 
 history: []

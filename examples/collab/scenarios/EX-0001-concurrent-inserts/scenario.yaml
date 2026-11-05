@@ -5,22 +5,22 @@ fixtures:
   doc: ../../fixtures/
 
 actors:
-  server: { uses: collab-server, with: { document: "${{ fixtures.doc }}" } }
-  alice:  { uses: editor, with: { server: server } }
-  bob:    { uses: editor, with: { server: server } }
+  server: {uses: collab-server, with: {document: "${{ fixtures.doc }}"}}
+  alice: {uses: editor, with: {server: server}}
+  bob: {uses: editor, with: {server: server}}
 
 steps:
   - alice, bob: pause-sync
-  - alice: { insert-paragraph: { at: start, text: alpha } }
-  - bob:   { insert-paragraph: { at: start, text: beta } }
+  - alice: {insert-paragraph: {at: start, text: alpha}}
+  - bob: {insert-paragraph: {at: start, text: beta}}
   - alice, bob: resume-sync
-  - alice, bob: { await: converged }
-  - alice: { snapshot: { as: final } }
+  - alice, bob: {await: converged}
+  - alice: {snapshot: {as: final}}
 
 outcomes:
   correct:
-    final: { has-paragraphs: [alpha, beta] }
+    final: {has-paragraphs: [alpha, beta]}
   drops-one:
-    final: { has-one-of: [alpha, beta] }
+    final: {has-one-of: [alpha, beta]}
 
 history: []

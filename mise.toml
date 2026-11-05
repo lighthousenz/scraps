@@ -11,6 +11,8 @@ cocogitto = "7.0.0"
 go = "1.27.3"
 golangci-lint = "2.15.0"
 goreleaser = "2.19.0"
+rumdl = "0.3.2"
+yamlfmt = "0.21.0"
 
 [bootstrap.hooks.post-tools]
 run = "mise exec -- go version"
@@ -42,6 +44,16 @@ description = "goreleaser is installed"
 run = "goreleaser --version"
 hint = "Run `mise bootstrap`."
 
+[doctor.checks.rumdl]
+description = "rumdl is installed"
+run = "rumdl --version"
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.yamlfmt]
+description = "yamlfmt is installed"
+run = "yamlfmt -version"
+hint = "Run `mise bootstrap`."
+
 # Build tasks — see AGENTS.md "Build and test".
 
 [tasks.build]
@@ -61,13 +73,32 @@ description = "Run golangci-lint"
 run = "golangci-lint run"
 
 [tasks.fmt]
-description = "Format code with golangci-lint"
-run = "golangci-lint fmt"
+description = "Format Go, Markdown, YAML and mise.toml"
+run = """
+golangci-lint fmt
+rumdl fmt AGENTS.md README.md testdata/e2e/README.md
+yamlfmt .github/workflows/*.yml .goreleaser.yaml .golangci.yml $(git ls-files 'examples/**/*.yaml')
+mise fmt
+"""
+
+[tasks."fmt:check"]
+description = "Check formatting without writing (Go, Markdown, YAML, mise.toml)"
+run = """
+golangci-lint fmt --diff && \
+rumdl fmt --check AGENTS.md README.md testdata/e2e/README.md && \
+yamlfmt -lint .github/workflows/*.yml .goreleaser.yaml .golangci.yml $(git ls-files 'examples/**/*.yaml') && \
+mise fmt --check
+"""
+
+[tasks."lint:md"]
+description = "Lint Markdown files with rumdl"
+run = "rumdl check AGENTS.md README.md internal/report/testdata/report.md testdata/e2e/README.md"
 
 [tasks.check]
 description = "The gate: fmt check, lint, build, test"
 run = """
-golangci-lint fmt --diff && \
+mise run fmt:check && \
+mise run lint:md && \
 golangci-lint run && \
 mise run build && \
 mise run test

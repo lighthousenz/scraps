@@ -1,0 +1,27 @@
+# rumdl configuration — markdown lint for scraps
+# House style: prose hard-wrapped near 88 columns; tables and code blocks are long.
+
+[global]
+# MD057 (existing-relative-links) fires on testdata fixtures that reference
+# paths that only exist at runtime.  Disable globally because testdata is
+# the only place relative links appear.
+extend-disable = ["MD057"]
+
+exclude = [
+    ".git",
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "CHANGELOG.md",
+    "LICENSE.md",
+    # CLAUDE.md is a symlink to AGENTS.md — lint the target once.
+    "CLAUDE.md",
+]
+
+respect-gitignore = true
+
+[MD013]
+line-length = 120
+code-blocks = false
+tables = false

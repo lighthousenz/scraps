@@ -13,7 +13,7 @@ prepare:
 run: node main.mjs
 
 inputs:
-  server: { type: actor, kind: collab-server }
+  server: {type: actor, kind: collab-server}
 
 outputs: {}
 
@@ -26,16 +26,16 @@ lifecycle:
   collect: []
 
 conditions:
-  synced:    { call: status, until: { synced: true }, every: 50ms }
-  converged: { call: digest, all-equal: true, every: 50ms }
+  synced: {call: status, until: {synced: true}, every: 50ms}
+  converged: {call: digest, all-equal: true, every: 50ms}
 
 operations:
-  connect:          {}
-  disconnect:       {}
-  pause-sync:       {}
-  resume-sync:      {}
-  insert-paragraph: { params: { at: { enum: [start, end] }, text: { type: string } } }
-  delete-paragraph: { params: { index: { type: integer } } }
-  status:           { returns: { synced: { type: boolean } } }
-  digest:           { returns: { value: { type: string } } }
-  snapshot:         { params: { as: { type: string } }, artefact: true }
+  connect: {}
+  disconnect: {}
+  pause-sync: {}
+  resume-sync: {}
+  insert-paragraph: {params: {at: {enum: [start, end]}, text: {type: string}}}
+  delete-paragraph: {params: {index: {type: integer}}}
+  status: {returns: {synced: {type: boolean}}}
+  digest: {returns: {value: {type: string}}}
+  snapshot: {params: {as: {type: string}}, artefact: true}

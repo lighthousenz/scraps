@@ -33,8 +33,10 @@ mise run build             # go build ./... into dist/
 mise run test              # go test ./... (race detector on)
 mise run test -- -run X ./internal/verdict/...   # one package or test while iterating
 mise run lint              # golangci-lint
-mise run fmt               # gofumpt + goimports; writes files
-mise run check             # the gate: fmt check, lint, build, test
+mise run lint:md           # markdown lint (rumdl)
+mise run fmt               # format Go, Markdown, YAML and mise.toml; writes files
+mise run fmt:check         # check formatting without writing (Go, Markdown, YAML, mise.toml)
+mise run check             # the gate: fmt:check, lint:md, lint, build, test
 ```
 
 Workers are ephemeral. Never assume a warm module or build cache from a previous run.
@@ -58,7 +60,7 @@ the PR has to say which.
 
 Put new code where this says, so parallel work does not collide.
 
-```
+```text
 cmd/scraps/        CLI entrypoint; one file per subcommand (run.go, validate.go, …)
 internal/
   model/           shared types: project, scenario, actor definition, results
