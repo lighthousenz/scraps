@@ -70,8 +70,8 @@ run = "golangci-lint run"
 description = "Format Go, Markdown, YAML and mise.toml"
 run = """
 golangci-lint fmt
-rumdl fmt AGENTS.md README.md internal/report/testdata/report.md testdata/e2e/README.md
-yamlfmt .github/workflows/*.yml .goreleaser.yaml .golangci.yml examples/**/*.yaml
+rumdl fmt AGENTS.md README.md testdata/e2e/README.md
+yamlfmt .github/workflows/*.yml .goreleaser.yaml .golangci.yml $(git ls-files 'examples/**/*.yaml')
 mise fmt
 """
 
@@ -79,8 +79,8 @@ mise fmt
 description = "Check formatting without writing (Go, Markdown, YAML, mise.toml)"
 run = """
 golangci-lint fmt --diff && \
-rumdl fmt --check AGENTS.md README.md internal/report/testdata/report.md testdata/e2e/README.md && \
-yamlfmt -lint .github/workflows/*.yml .goreleaser.yaml .golangci.yml examples/**/*.yaml && \
+rumdl fmt --check AGENTS.md README.md testdata/e2e/README.md && \
+yamlfmt -lint .github/workflows/*.yml .goreleaser.yaml .golangci.yml $(git ls-files 'examples/**/*.yaml') && \
 mise fmt --check
 """
 
