@@ -95,7 +95,9 @@ testdata/          fixtures for Go tests; synthetic only
 - **Commits:** conventional, lowercase subject: `feat(verdict): add changed verdict`.
   One logical change per commit. Checked by cocogitto (`cog`); the `retro` type is
   allowed. PRs land as merge commits, so every commit in a PR must be conventional;
-  merge commits and PR titles are not checked.
+  merge commits and PR titles are not checked. Merging to `main` publishes a
+  release when the new commits include `feat`, `fix`, `perf` or a breaking
+  change, so choose the commit type with that in mind.
 - **Branches:** if your branch was cut for you, do not rename or re-target it.
 - **Comments:** explain why, not what. One line where one line does. The code should
   carry the rest.
