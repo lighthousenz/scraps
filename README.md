@@ -458,11 +458,34 @@ The conductor owns the order of phases. The actor definition says what happens i
 
 | Phase | When | What |
 |---|---|---|
-| `prepare` | Before the run, once per distinct set of `cache-key` subject versions | A shell command. Installs the subject version under test. Cached. |
+| `prepare` | Before the run, once per distinct set of `cache-key` subject versions | A shell command. Installs the subject version under test. Cached (see [The prepared directory](#the-prepared-directory)). |
 | `start` | After the actor's dependencies are ready | Operations called in order, such as connecting to a server. |
 | `ready` | After `start` | A named condition. Scraps waits until it holds or `ready-timeout` passes. It never sleeps a fixed time. |
 | `stop` | On a `stop` step, or at the end of the run in reverse dependency order | Operations called in order. |
 | `collect` | Straight after `stop` | Operations that write artefacts. Outcomes are evaluated after every actor has been collected. |
+
+### The prepared directory
+
+Before `prepare` runs, Scraps copies the actor's directory into `.scraps/cache/prepared/`
+and runs the actor from that copy. Nothing outside the actor's directory is copied, so an
+actor can't import a sibling directory through a relative path such as `../shared/`.
+
+The cache key covers the directory's contents, the actor's `tools`, and the versions of the
+`cache-key` subjects. Change any of them and the actor is prepared again.
+
+Symlinks inside the actor's directory are handled as follows:
+
+| Symlink points to | In the prepared directory | In the cache key |
+|---|---|---|
+| A file or directory inside the actor's directory | Recreated as the same symlink | The link text |
+| A file outside the actor's directory | A regular file holding the target's contents | The target's contents |
+| A directory outside the actor's directory | Not supported. `prepare` fails and the run is `broken`. | n/a |
+| Something that doesn't exist (outside) | Not supported. `prepare` fails and the run is `broken`. | n/a |
+
+The second row is how several actors share one file. Keep it once, for example in
+`actors/_shared/protocol.mjs`, and give each actor a relative symlink to it. Each prepared
+actor still holds its own copy. Editing the shared file prepares every actor that links to it
+again.
 
 ### Conditions
 

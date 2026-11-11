@@ -233,7 +233,15 @@ func hashDir(dir string) ([]byte, error) {
 				files = append(files, fileEntry{relPath: rel, hashPath: path, symlink: true})
 			} else {
 				// Outside-tree symlink: hash the target content (the copy
-				// materialises the target as a regular file).
+				// materialises the target as a regular file). Hashing runs before
+				// copyDir, so reject unusable targets here with copyDir's messages.
+				fi, err := os.Stat(resolved)
+				if err != nil {
+					return fmt.Errorf("symlink %s points outside source tree and target is missing: %w", rel, err)
+				}
+				if fi.IsDir() {
+					return fmt.Errorf("symlink %s points to directory outside source tree; not supported", rel)
+				}
 				files = append(files, fileEntry{relPath: rel, hashPath: resolved, symlink: false})
 			}
 			return nil
