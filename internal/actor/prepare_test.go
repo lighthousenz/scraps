@@ -560,3 +560,50 @@ func TestPrepareCancelledContext(t *testing.T) {
 		t.Fatal("expected error from cancelled context")
 	}
 }
+
+func TestPrepareOutsideTreeSymlinkMissingTarget(t *testing.T) {
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "main.js"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write main.js: %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "gone.js")
+	if err := os.Symlink(missing, filepath.Join(srcDir, "lib.js")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	cfg := &actor.PrepareConfig{SourceDir: srcDir, CacheDir: filepath.Join(t.TempDir(), "cache")}
+	_, err := actor.Prepare(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected prepare to fail for a dangling outside-tree symlink")
+	}
+	for _, want := range []string{"lib.js", "target is missing"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestPrepareOutsideTreeSymlinkToDirectory(t *testing.T) {
+	externalDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(externalDir, "shared.js"), []byte("v1"), 0o644); err != nil {
+		t.Fatalf("write shared.js: %v", err)
+	}
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "main.js"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write main.js: %v", err)
+	}
+	if err := os.Symlink(externalDir, filepath.Join(srcDir, "lib")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	cfg := &actor.PrepareConfig{SourceDir: srcDir, CacheDir: filepath.Join(t.TempDir(), "cache")}
+	_, err := actor.Prepare(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected prepare to fail for an outside-tree directory symlink")
+	}
+	for _, want := range []string{"lib", "directory outside source tree"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
