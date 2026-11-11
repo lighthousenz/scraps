@@ -24,6 +24,13 @@ mise doctor project    # checks this machine is ready; inspects only, changes no
 runs the `[doctor.checks.*]` in `mise.toml`. When you add a prerequisite, add both:
 the bootstrap entry that provides it, and the doctor check that verifies it.
 
+`mise bootstrap` also installs lefthook git hooks. They run the cheap checks before
+each commit: `cog verify` on the commit message, `golangci-lint fmt --diff` on staged
+`.go` files, `rumdl` on staged `.md` files (excluding `testdata/`), `yamlfmt -lint` on
+staged `.yml`/`.yaml` files (excluding `testdata/`), and `mise fmt --check` on
+`mise.toml`. Set `LEFTHOOK=0`
+to skip hooks in an emergency.
+
 ## Build and test
 
 These tasks are the build contract.
@@ -33,8 +40,10 @@ mise run build             # go build ./... into dist/
 mise run test              # go test ./... (race detector on)
 mise run test -- -run X ./internal/verdict/...   # one package or test while iterating
 mise run lint              # golangci-lint
-mise run fmt               # gofumpt + goimports; writes files
-mise run check             # the gate: fmt check, lint, build, test
+mise run lint:md           # markdown lint (rumdl)
+mise run fmt               # format Go, Markdown, YAML and mise.toml; writes files
+mise run fmt:check         # check formatting without writing (Go, Markdown, YAML, mise.toml)
+mise run check             # the gate: fmt:check, lint:md, lint, build, test
 ```
 
 Workers are ephemeral. Never assume a warm module or build cache from a previous run.
@@ -58,7 +67,7 @@ the PR has to say which.
 
 Put new code where this says, so parallel work does not collide.
 
-```
+```text
 cmd/scraps/        CLI entrypoint; one file per subcommand (run.go, validate.go, …)
 internal/
   model/           shared types: project, scenario, actor definition, results
@@ -91,7 +100,11 @@ testdata/          fixtures for Go tests; synthetic only
 ## Conventions
 
 - **Commits:** conventional, lowercase subject: `feat(verdict): add changed verdict`.
-  One logical change per commit.
+  One logical change per commit. Checked by cocogitto (`cog`); the `retro` type is
+  allowed. PRs land as merge commits, so every commit in a PR must be conventional;
+  merge commits and PR titles are not checked. Merging to `main` publishes a
+  release when the new commits include `feat`, `fix`, `perf` or a breaking
+  change, so choose the commit type with that in mind.
 - **Branches:** if your branch was cut for you, do not rename or re-target it.
 - **Comments:** explain why, not what. One line where one line does. The code should
   carry the rest.

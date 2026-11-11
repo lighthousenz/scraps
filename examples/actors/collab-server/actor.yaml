@@ -13,10 +13,10 @@ prepare:
 run: node main.mjs
 
 inputs:
-  document: { type: string }
+  document: {type: string}
 
 outputs:
-  url: { type: string }
+  url: {type: string}
 
 lifecycle:
   ready: listening
@@ -25,8 +25,8 @@ lifecycle:
   collect: []
 
 conditions:
-  listening: { call: status, until: { listening: true }, every: 50ms }
+  listening: {call: status, until: {listening: true}, every: 50ms}
 
 operations:
-  status:     { returns: { listening: { type: boolean } } }
+  status: {returns: {listening: {type: boolean}}}
   save-state: {}

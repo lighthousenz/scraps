@@ -15,9 +15,9 @@ lifecycle:
   ready: ready
 
 conditions:
-  ready: { call: status, until: { ready: true }, every: 50ms }
+  ready: {call: status, until: {ready: true}, every: 50ms}
 
 operations:
-  write:    { params: { text: { type: string } } }
-  snapshot: { params: { as: { type: string } }, artefact: true }
-  status:   { returns: { ready: { type: boolean } } }
+  write: {params: {text: {type: string}}}
+  snapshot: {params: {as: {type: string}}, artefact: true}
+  status: {returns: {ready: {type: boolean}}}
