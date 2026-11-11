@@ -68,6 +68,16 @@ description = "yamlfmt is installed"
 run = "yamlfmt -version"
 hint = "Run `mise bootstrap`."
 
+[doctor.checks.gh]
+description = "GitHub CLI is installed (needed by rulesets:apply)"
+run = "gh --version"
+hint = "Install gh: https://cli.github.com/"
+
+[doctor.checks.jq]
+description = "jq is installed (needed by rulesets:apply)"
+run = "jq --version"
+hint = "Install jq: brew install jq / apt install jq"
+
 # Build tasks — see AGENTS.md "Build and test".
 
 [tasks.build]
@@ -136,3 +146,113 @@ if [ "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)" ]; then
 fi
 cog check "$tag..HEAD"
 """
+
+[tasks."rulesets:apply"]
+description = "Apply .github/rulesets/*.json to the repo via gh api (dry-run by default)"
+usage = '''
+flag "--apply" help="Actually create/update/delete rulesets (default is dry-run)"
+flag "--prune" help="Delete remote rulesets that have no local JSON file"
+'''
+run = '''
+{% raw %}#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+RULESETS_DIR=".github/rulesets"
+
+if [ ! -d "$RULESETS_DIR" ]; then
+  echo "No $RULESETS_DIR directory found." >&2
+  exit 1
+fi
+
+apply="${usage_apply:-false}"
+prune="${usage_prune:-false}"
+
+# Collect local ruleset files
+local_files=()
+for f in "$RULESETS_DIR"/*.json; do
+  [ -f "$f" ] || continue
+  local_files+=("$f")
+done
+
+if [ "${#local_files[@]}" -eq 0 ]; then
+  echo "No JSON files in $RULESETS_DIR." >&2
+  exit 1
+fi
+
+# Fetch existing remote rulesets as JSON array
+remote_json="$(gh api "repos/$REPO/rulesets?includes_parents=false" --paginate)"
+
+# Lookup remote ruleset id by name; prints id or empty
+remote_id_for() {
+  echo "$remote_json" | jq -r --arg n "$1" '.[] | select(.name == $n) | .id // empty'
+}
+
+echo "=== Ruleset sync plan for $REPO ==="
+echo ""
+
+# Track which remote names have a local file
+local_names=""
+for f in "${local_files[@]}"; do
+  name="$(jq -r '.name' "$f")"
+  local_names="$local_names|$name|"
+  rid="$(remote_id_for "$name")"
+  if [ -n "$rid" ]; then
+    echo "UPDATE  \"$name\" (id $rid) <- $f"
+    if [ "$apply" = "true" ]; then
+      gh api "repos/$REPO/rulesets/$rid" \
+        --method PUT \
+        --input "$f" \
+        --silent
+      echo "  done"
+    fi
+  else
+    echo "CREATE  \"$name\" <- $f"
+    if [ "$apply" = "true" ]; then
+      gh api "repos/$REPO/rulesets" \
+        --method POST \
+        --input "$f" \
+        --silent
+      echo "  done"
+    fi
+  fi
+done
+
+# Report orphan rulesets (remote but no local file)
+echo ""
+orphan_count=0
+while IFS=$'\t' read -r rid rname; do
+  [ -n "$rid" ] || continue
+  case "$local_names" in
+    *"|$rname|"*) continue ;;
+  esac
+  if [ "$orphan_count" -eq 0 ]; then
+    echo "=== Orphan rulesets (remote but no local file) ==="
+  fi
+  orphan_count=$((orphan_count + 1))
+  echo "ORPHAN  \"$rname\" (id $rid)"
+  if [ "$prune" = "true" ]; then
+    if [ "$apply" = "true" ]; then
+      gh api "repos/$REPO/rulesets/$rid" --method DELETE --silent
+      echo "  deleted"
+    else
+      echo "  (would delete with --apply)"
+    fi
+  fi
+done <<EOF
+$(echo "$remote_json" | jq -r '.[] | [(.id | tostring), .name] | @tsv')
+EOF
+
+if [ "$orphan_count" -gt 0 ] && [ "$prune" != "true" ]; then
+  echo ""
+  echo "Pass --prune to mark these for deletion (still needs --apply to execute)."
+fi
+if [ "$orphan_count" -eq 0 ]; then
+  echo "No orphan rulesets."
+fi
+
+if [ "$apply" != "true" ]; then
+  echo ""
+  echo "Dry run complete. Pass --apply to execute changes."
+fi{% endraw %}
+'''
