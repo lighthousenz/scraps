@@ -1,0 +1,32 @@
+# lefthook.yml — cheap pre-commit checks.
+# Installed by `mise bootstrap`. Skip with LEFTHOOK=0 in an emergency.
+
+commit-msg:
+  jobs:
+    - name: conventional-commit
+      run: mise x -- cog verify --file {1}
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: go-fmt
+      glob: "*.go"
+      run: mise x -- golangci-lint fmt --diff {staged_files}
+
+    - name: markdown-fmt
+      glob: "*.md"
+      exclude:
+        - "testdata/**"
+        - "**/testdata/**"
+      run: mise x -- rumdl fmt --check {staged_files}
+
+    - name: yaml-fmt
+      glob: "*.{yml,yaml}"
+      exclude:
+        - "testdata/**"
+        - "**/testdata/**"
+      run: mise x -- yamlfmt -lint {staged_files}
+
+    - name: mise-toml-fmt
+      glob: "mise.toml"
+      run: mise x -- mise fmt --check

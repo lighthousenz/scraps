@@ -7,12 +7,19 @@ min_version = "2026.10.20"
 #   mise doctor project   check this machine is ready; inspects only
 
 [tools]
+cocogitto = "7.0.0"
 go = "1.27.3"
 golangci-lint = "2.15.0"
 goreleaser = "2.19.0"
+lefthook = "2.2.2"
+rumdl = "0.3.2"
+yamlfmt = "0.21.0"
 
 [bootstrap.hooks.post-tools]
-run = "mise exec -- go version"
+run = """
+mise exec -- go version
+mise exec -- lefthook install
+"""
 
 # mise discards check output and shows only the hint, so each check tests one thing.
 
@@ -20,6 +27,11 @@ run = "mise exec -- go version"
 description = "git is installed"
 run = "git --version"
 hint = "Install git (macOS: xcode-select --install)."
+
+[doctor.checks.cocogitto]
+description = "cocogitto is installed"
+run = "cog --version"
+hint = "Run `mise bootstrap`."
 
 [doctor.checks.go]
 description = "Go is installed at the version mise.toml pins"
@@ -34,6 +46,26 @@ hint = "Run `mise bootstrap`."
 [doctor.checks.goreleaser]
 description = "goreleaser is installed"
 run = "goreleaser --version"
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.lefthook]
+description = "lefthook is installed"
+run = "lefthook version"
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.lefthook-hooks]
+description = "lefthook hooks are installed in this clone"
+run = "lefthook check-install"
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.rumdl]
+description = "rumdl is installed"
+run = "rumdl --version"
+hint = "Run `mise bootstrap`."
+
+[doctor.checks.yamlfmt]
+description = "yamlfmt is installed"
+run = "yamlfmt -version"
 hint = "Run `mise bootstrap`."
 
 [doctor.checks.gh]
@@ -65,13 +97,32 @@ description = "Run golangci-lint"
 run = "golangci-lint run"
 
 [tasks.fmt]
-description = "Format code with golangci-lint"
-run = "golangci-lint fmt"
+description = "Format Go, Markdown, YAML and mise.toml"
+run = """
+golangci-lint fmt
+rumdl fmt AGENTS.md README.md testdata/e2e/README.md
+yamlfmt .github/workflows/*.yml .goreleaser.yaml .golangci.yml $(git ls-files 'examples/**/*.yaml')
+mise fmt
+"""
+
+[tasks."fmt:check"]
+description = "Check formatting without writing (Go, Markdown, YAML, mise.toml)"
+run = """
+golangci-lint fmt --diff && \
+rumdl fmt --check AGENTS.md README.md testdata/e2e/README.md && \
+yamlfmt -lint .github/workflows/*.yml .goreleaser.yaml .golangci.yml $(git ls-files 'examples/**/*.yaml') && \
+mise fmt --check
+"""
+
+[tasks."lint:md"]
+description = "Lint Markdown files with rumdl"
+run = "rumdl check AGENTS.md README.md internal/report/testdata/report.md testdata/e2e/README.md"
 
 [tasks.check]
 description = "The gate: fmt check, lint, build, test"
 run = """
-golangci-lint fmt --diff && \
+mise run fmt:check && \
+mise run lint:md && \
 golangci-lint run && \
 mise run build && \
 mise run test
@@ -84,6 +135,17 @@ run = "mise run build && go test -tags e2e -count=1 -timeout 30m ./e2e/..."
 [tasks."release:check"]
 description = "Validate goreleaser config and run a snapshot build"
 run = "goreleaser check && goreleaser release --snapshot --clean"
+
+[tasks."lint:commits"]
+description = "Check conventional commits since the latest v* tag"
+run = """
+tag=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null) || { echo "No v* tag found; skipping."; exit 0; }
+if [ "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)" ]; then
+  echo "HEAD is the tagged commit $tag; nothing to check."
+  exit 0
+fi
+cog check "$tag..HEAD"
+"""
 
 [tasks."rulesets:apply"]
 description = "Apply .github/rulesets/*.json to the repo via gh api (dry-run by default)"

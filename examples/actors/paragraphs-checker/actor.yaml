@@ -11,17 +11,17 @@ run: python main.py
 operations:
   has-paragraphs:
     params:
-      texts: { type: array, items: { type: string } }
+      texts: {type: array, items: {type: string}}
     returns:
-      match: { type: boolean }
+      match: {type: boolean}
   has-one-of:
     params:
-      texts: { type: array, items: { type: string } }
+      texts: {type: array, items: {type: string}}
     returns:
-      match: { type: boolean }
+      match: {type: boolean}
   paragraph-count:
     params:
-      equals: { type: integer }
-      greater-than: { type: integer }
+      equals: {type: integer}
+      greater-than: {type: integer}
     returns:
-      match: { type: boolean }
+      match: {type: boolean}

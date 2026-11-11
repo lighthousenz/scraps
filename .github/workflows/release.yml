@@ -12,6 +12,9 @@ on:
   push:
     tags:
       - "v*"
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -29,9 +32,12 @@ jobs:
           version: "2026.10.20"
       - run: mise run release:check
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
+  release-manual:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -45,3 +51,93 @@ jobs:
       - run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-auto:
+    if: >-
+      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2
+        with:
+          version: "2026.10.20"
+
+      - name: Check if HEAD is already tagged
+        id: check-tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |-
+          tag=$(git describe --exact-match --tags --match 'v*' HEAD 2>/dev/null) || {
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "HEAD is already tagged $tag with a GitHub release; nothing to do."
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "HEAD is tagged $tag but has no GitHub release; will run goreleaser."
+          fi
+
+      - name: Require a baseline v* tag
+        if: steps.check-tag.outputs.skip != 'true'
+        run: |-
+          if ! git describe --tags --abbrev=0 --match 'v*' HEAD >/dev/null 2>&1; then
+            echo "::error::No v* tag found in history. Push an initial tag (e.g. v0.1.0) before enabling automatic releases."
+            exit 1
+          fi
+
+      - name: Compute next version
+        if: steps.check-tag.outputs.skip != 'true'
+        id: next-version
+        run: |-
+          output=$(cog bump --auto --dry-run 2>&1) || {
+            echo "::error::cog bump failed: $output"
+            exit 1
+          }
+          if echo "$output" | grep -q "No conventional commits for your repository that required a bump"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No release-worthy commits since the last tag." >> "$GITHUB_STEP_SUMMARY"
+            echo "cog output: $output" >> "$GITHUB_STEP_SUMMARY"
+          else
+            version=$(echo "$output" | tail -1)
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Next version: $version"
+          fi
+
+      - name: Configure git identity
+        if: steps.check-tag.outputs.skip != 'true' && steps.next-version.outputs.skip != 'true'
+        run: |-
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Tag and release
+        if: steps.check-tag.outputs.skip != 'true' && steps.next-version.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_VERSION: ${{ steps.next-version.outputs.version }}
+        run: |-
+          git tag -a "$NEXT_VERSION" -m "$NEXT_VERSION" HEAD
+          git push origin "$NEXT_VERSION"
+          goreleaser release --clean
+
+      - name: Release existing tag
+        if: steps.check-tag.outputs.skip == 'true' && steps.check-tag.outputs.released == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ steps.check-tag.outputs.tag }}
+        run: goreleaser release --clean

@@ -126,7 +126,7 @@ scraps schema      # generates .scraps/schema.json for your editor
 scraps run --subject docengine=2.31.0
 ```
 
-```
+```text
 scraps 1.4.0 · docengine 2.31.0 · seed 81723
 
   DOC-0017  Table cell merge loses borders        as-expected   correct      0.8s
@@ -141,7 +141,7 @@ scraps 1.4.0 · docengine 2.31.0 · seed 81723
 
 A project looks like this:
 
-```
+```text
 scraps.yaml               project config: subjects, links, actor sources, checkers
 scraps.lock               pinned actor and checker references
 actors/                   your own actor definitions
