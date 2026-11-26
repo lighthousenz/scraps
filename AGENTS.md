@@ -132,6 +132,8 @@ testdata/          fixtures for Go tests; synthetic only
 - Never change `mise.toml`, `.golangci.yml`, or CI workflow files unless that is
   explicitly your task. These are shared surface; a change here breaks every other task
   in flight.
+- Paths in `.github/CODEOWNERS` need a code owner's approval to merge. Required CI
+  workflows run from `main`, so editing a workflow in a PR does not change its own gate.
 
 ## Working in parallel
 

@@ -176,12 +176,12 @@ links:
     required-when: { expects-not: correct }
 
 actors:
-  collab-server: github:lighthousenz/scraps-actors/hocuspocus@v1.2.0
-  editor:        github:lighthousenz/scraps-actors/yjs-editor@v1.2.0
+  collab-server: github:acme/scraps-actors/hocuspocus@v1.2.0
+  editor:        github:acme/scraps-actors/yjs-editor@v1.2.0
   docengine-cli: ./actors/docengine-cli
 
 checkers:
-  - github:lighthousenz/scraps-actors/docx-checker@v1.2.0
+  - github:acme/scraps-actors/docx-checker@v1.2.0
 
 defaults:
   step-timeout: 10s
