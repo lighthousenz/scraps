@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@hocuspocus/server": "^2.13.6"
+    "@hocuspocus/server": "^4.9.0"
   }
 }

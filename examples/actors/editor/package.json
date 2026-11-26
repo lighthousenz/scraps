@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@hocuspocus/provider": "^2.13.6",
-    "ws": "^8.18.0"
+    "@hocuspocus/provider": "^4.9.0",
+    "ws": "^8.23.0"
   }
 }
