@@ -1,0 +1,14 @@
+# Shared build and governance surface. A PR touching these needs a code owner's review,
+# so a PR cannot weaken the gate it is judged by. See issue #35.
+/.github/           @arcticShadow
+/mise.toml          @arcticShadow
+/lefthook.yml       @arcticShadow
+/.golangci.yml      @arcticShadow
+/.goreleaser.yaml   @arcticShadow
+/cog.toml           @arcticShadow
+/.rumdl.toml        @arcticShadow
+/.yamlfmt.yaml      @arcticShadow
+/REVIEW.md          @arcticShadow
+/AGENTS.md          @arcticShadow
+/LICENSE            @arcticShadow
+/SECURITY.md        @arcticShadow
