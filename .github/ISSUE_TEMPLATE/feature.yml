@@ -1,0 +1,16 @@
+name: Feature request
+description: Propose a change to scenarios, config, the actor protocol, the CLI or reports.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do and why Scraps does not support it today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How it could work, including any README (spec) changes.
